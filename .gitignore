@@ -3,3 +3,7 @@
 __pycache__/
 chroma_db/
 venv/
+.pytest_cache/
+*.sqlite
+*.sqlite3
+.ruff_cache/

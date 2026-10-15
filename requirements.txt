@@ -1,0 +1,17 @@
+langgraph
+langchain-core
+langchain-groq
+langchain-chroma
+langchain-huggingface
+langchain-text-splitters
+sentence-transformers
+chromadb
+fastapi
+uvicorn
+python-multipart
+pydantic-settings
+httpx
+beautifulsoup4
+python-dotenv
+pytest
+ruff
