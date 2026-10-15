@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     chroma_dir: Path = ROOT_DIR / "chroma_db"
     collection_name: str = "docs"
     corpus_dir: Path = ROOT_DIR / "data" / "corpus"
+    feedback_db: Path = ROOT_DIR / "data" / "feedback.sqlite3"
 
     top_k: int = 5
     max_retries: int = 2

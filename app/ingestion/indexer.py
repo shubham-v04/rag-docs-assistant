@@ -88,3 +88,7 @@ def list_documents() -> list[dict]:
         {"source": source, "title": titles[source], "chunk_count": chunk_counts[source]}
         for source in sorted(chunk_counts)
     ]
+
+
+def chunk_count() -> int:
+    return get_vectorstore()._collection.count()
