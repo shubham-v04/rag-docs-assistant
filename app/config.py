@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     groq_api_key: str = ""
     generation_model: str = "llama-3.3-70b-versatile"
     # small model for query analysis and grading: cheaper and fast enough
-    grader_model: str = "llama-3.1-8b-instant"
+    grader_model: str = "openai/gpt-oss-20b"
     # verifying an answer needs a stronger model than the 8b used for grading
     grounding_model: str = "llama-3.3-70b-versatile"
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
