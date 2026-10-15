@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.graph.builder import build_graph, decide_after_grounding, run_graph
-from app.graph.nodes import UNVERIFIED_MESSAGE, GroundingResult
+from app.graph.nodes import UNVERIFIED_MESSAGE, GroundingResult, ProviderError
 from app.graph.state import initial_state
 from tests.fakes import FakeRetriever, make_deps, make_doc
 
@@ -139,7 +139,7 @@ def test_grounding_call_failure_passes_the_answer_through(caplog):
     assert "grounding check failed" in caplog.text
 
 
-def test_failed_generation_is_not_sent_to_the_checker():
+def test_failed_generation_is_a_provider_error_and_skips_the_checker():
     checked = []
 
     def generate(variables):
@@ -148,10 +148,11 @@ def test_failed_generation_is_not_sent_to_the_checker():
     deps = deps_with(
         lambda v: checked.append(v) or GroundingResult(grounded=True), generate
     )
-    result = run(deps)
 
-    assert result["trace"] == BASE_TRACE
-    assert result["no_answer"] is True
+    with pytest.raises(
+        ProviderError, match="answer generation failed: RuntimeError: llm down"
+    ):
+        run(deps)
     assert checked == []
 
 

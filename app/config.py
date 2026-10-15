@@ -10,11 +10,12 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=ROOT_DIR / ".env", extra="ignore")
 
     groq_api_key: str = ""
-    generation_model: str = "llama-3.3-70b-versatile"
-    # small model for query analysis and grading: cheaper and fast enough
+    # Tested with openai/gpt-oss-20b on Groq. Which models an account may use differs,
+    # so each role can be overridden on its own (GENERATION_MODEL and so on).
+    generation_model: str = "openai/gpt-oss-20b"
+    # query analysis, chunk grading and query rewriting
     grader_model: str = "openai/gpt-oss-20b"
-    # verifying an answer needs a stronger model than the 8b used for grading
-    grounding_model: str = "llama-3.3-70b-versatile"
+    grounding_model: str = "openai/gpt-oss-20b"
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
 
     chroma_dir: Path = ROOT_DIR / "chroma_db"

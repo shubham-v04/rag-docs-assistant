@@ -60,3 +60,45 @@ def test_load_url_raises_on_http_errors():
 
     with pytest.raises(httpx.HTTPStatusError):
         load_url("https://example.com/missing.md", client=client)
+
+
+MKDOCS_PAGE = b"""# CORS (Cross-Origin Resource Sharing) { #cors-cross-origin-resource-sharing }
+
+Intro text with {braces} and a literal { #not-a-heading } in prose.
+
+## Use CORSMiddleware { #use-corsmiddleware }
+
+```python
+# a comment { #kept }
+origins = {"a": 1}
+```
+"""
+
+
+def test_mkdocs_anchors_are_removed_from_titles_and_headings():
+    doc = load_bytes(MKDOCS_PAGE, "cors.md")
+
+    assert doc.title == "CORS (Cross-Origin Resource Sharing)"
+    assert "# CORS (Cross-Origin Resource Sharing)\n" in doc.text
+    assert "## Use CORSMiddleware\n" in doc.text
+    assert "cors-cross-origin" not in doc.text
+    # only heading lines outside code fences are touched
+    assert "# a comment { #kept }" in doc.text
+    assert "{braces}" in doc.text
+    assert "literal { #not-a-heading } in prose" in doc.text
+
+
+def test_url_ingested_markdown_gets_clean_titles_and_header_paths():
+    from app.ingestion.chunker import chunk_document
+
+    client = httpx.Client(
+        transport=httpx.MockTransport(
+            lambda r: httpx.Response(200, content=MKDOCS_PAGE)
+        )
+    )
+    doc = load_url("https://example.com/tutorial/cors.md", client=client)
+    paths = {c.metadata["header_path"] for c in chunk_document(doc)}
+
+    assert doc.title == "CORS (Cross-Origin Resource Sharing)"
+    assert "CORS (Cross-Origin Resource Sharing) > Use CORSMiddleware" in paths
+    assert not any("{" in path for path in paths)

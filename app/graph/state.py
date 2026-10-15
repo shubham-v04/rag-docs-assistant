@@ -37,8 +37,11 @@ class GraphState(TypedDict):
                             retrieval attempts at most
       max_retries         - set once by run_graph from config
       answer, sources     - generate, or no_answer when nothing relevant was found
-      no_answer           - False by default; the no_answer node (or a failed
-                            generation) sets it to True
+      no_answer           - False by default; the no_answer and unverified nodes set it
+      provider_error      - set by grade_documents when every grading call in a round
+                            fails, and by generate when the answer call fails. The
+                            graph ends there and run_graph raises ProviderError, so a
+                            broken provider is never reported as "not found"
       history             - earlier turns of the conversation, set once by run_graph and
                             read only by analyze_query. Grading never sees it.
       grounded            - check_grounding: True/False, or None if the check did not run
@@ -61,6 +64,7 @@ class GraphState(TypedDict):
     answer: str
     sources: list[Source]
     no_answer: bool
+    provider_error: str | None
     history: list[Turn]
     grounded: bool | None
     unsupported_claims: list[str]
@@ -83,6 +87,7 @@ def initial_state(
         answer="",
         sources=[],
         no_answer=False,
+        provider_error=None,
         history=history or [],
         grounded=None,
         unsupported_claims=[],

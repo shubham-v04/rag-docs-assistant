@@ -1,7 +1,14 @@
 import logging
 
+import pytest
+
 from app.graph.builder import build_graph, run_graph
-from app.graph.nodes import NO_ANSWER_MESSAGE, QueryAnalysis, RewrittenQuery
+from app.graph.nodes import (
+    NO_ANSWER_MESSAGE,
+    ProviderError,
+    QueryAnalysis,
+    RewrittenQuery,
+)
 from tests.fakes import FakeRetriever, make_deps, make_doc
 
 QUESTION = "How do I declare an optional query parameter?"
@@ -187,3 +194,93 @@ def test_failed_query_analysis_falls_back_to_the_question():
     assert retriever.queries == [QUESTION]
     assert result["query_type"] == "conceptual"
     assert result["trace"][-1] == "generate"
+
+
+# --- provider failures are not "not found" ----------------------------------
+
+
+def failing_grader(variables: dict) -> bool:
+    raise RuntimeError("Error code: 404 - model_not_found")
+
+
+def test_every_grading_call_failing_is_a_provider_error_not_a_no_answer():
+    retriever = FakeRetriever(lambda query: [DEFAULTS_A, BODY])
+    generated: list[dict] = []
+    deps = make_deps(
+        retriever, grade=failing_grader, generate=lambda v: generated.append(v) or "x"
+    )
+
+    with pytest.raises(ProviderError) as exc:
+        run_graph(
+            QUESTION,
+            graph=build_graph(deps, enable_grounding_check=False),
+            max_retries=2,
+        )
+
+    assert "every grading call failed" in str(exc.value)
+    assert "model_not_found" in str(exc.value)
+    # no point retrying a broken provider
+    assert len(retriever.calls) == 1
+    assert generated == []
+
+
+def test_unparseable_grades_for_every_chunk_are_also_a_provider_error():
+    from langchain_core.runnables import RunnableLambda
+
+    deps = make_deps(
+        FakeRetriever(lambda query: [DEFAULTS_A, BODY]), grade=lambda v: True
+    )
+    deps.grader = RunnableLambda(lambda v: None)
+
+    with pytest.raises(ProviderError, match="could not be parsed"):
+        run_graph(
+            QUESTION,
+            graph=build_graph(deps, enable_grounding_check=False),
+            max_retries=2,
+        )
+
+
+def test_one_failed_chunk_among_graded_ones_is_just_irrelevant():
+    def grade(variables: dict) -> bool:
+        if "request-body.md" in variables["context"]:
+            raise ValueError("bad output")
+        return False
+
+    deps = make_deps(FakeRetriever(lambda query: [DEFAULTS_A, BODY]), grade=grade)
+    result = run_graph(
+        QUESTION, graph=build_graph(deps, enable_grounding_check=False), max_retries=0
+    )
+
+    assert result["no_answer"] is True
+    assert result["answer"] == NO_ANSWER_MESSAGE
+
+
+def test_provider_failure_in_a_later_round_is_still_reported():
+    rounds = {"count": 0}
+
+    def grade(variables: dict) -> bool:
+        if rounds["count"] >= 2:
+            raise RuntimeError("provider went down")
+        rounds["count"] += 1
+        return False
+
+    retriever = FakeRetriever(lambda query: [DEFAULTS_A, BODY])
+    deps = make_deps(retriever, grade=grade)
+
+    with pytest.raises(ProviderError, match="provider went down"):
+        run_graph(
+            QUESTION,
+            graph=build_graph(deps, enable_grounding_check=False),
+            max_retries=2,
+        )
+    assert len(retriever.calls) == 2
+
+
+def test_an_empty_retrieval_is_not_a_provider_error():
+    deps = make_deps(FakeRetriever(lambda query: []), grade=failing_grader)
+    result = run_graph(
+        QUESTION, graph=build_graph(deps, enable_grounding_check=False), max_retries=1
+    )
+
+    assert result["no_answer"] is True
+    assert result["retry_count"] == 1

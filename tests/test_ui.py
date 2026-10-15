@@ -113,3 +113,57 @@ def test_feedback_is_posted_for_the_last_query():
     ui.send_feedback(client_with(handler), "q9", "down")
     assert b'"query_id":"q9"' in seen["body"].replace(b" ", b"")
     assert b'"rating":"down"' in seen["body"].replace(b" ", b"")
+
+
+# --- settings from .env -----------------------------------------------------
+
+UI_VARS = ["API_BASE_URL", "UI_HOST", "UI_PORT"]
+
+
+@pytest.fixture
+def clean_ui_env(monkeypatch):
+    for name in UI_VARS:
+        # set then delete, so monkeypatch removes whatever load_env adds afterwards
+        monkeypatch.setenv(name, "placeholder")
+        monkeypatch.delenv(name)
+
+
+def test_defaults_without_env_or_file(clean_ui_env, tmp_path):
+    ui.load_env(tmp_path / "missing.env")
+
+    assert ui.api_base_url() == "http://localhost:8000"
+    assert ui.launch_settings() == ("127.0.0.1", 7860)
+
+
+def test_settings_in_the_env_file_are_used(clean_ui_env, tmp_path):
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "API_BASE_URL=http://api.internal:9000/\nUI_HOST=0.0.0.0\nUI_PORT=8123\n"
+    )
+    ui.load_env(env_file)
+
+    assert ui.api_base_url() == "http://api.internal:9000"
+    assert ui.launch_settings() == ("0.0.0.0", 8123)
+    assert str(ui.make_client().base_url) == "http://api.internal:9000"
+
+
+def test_real_environment_variables_win_over_the_env_file(
+    clean_ui_env, monkeypatch, tmp_path
+):
+    env_file = tmp_path / ".env"
+    env_file.write_text("API_BASE_URL=http://from-file:1\nUI_PORT=1111\n")
+    monkeypatch.setenv("API_BASE_URL", "http://from-shell:2")
+    ui.load_env(env_file)
+
+    assert ui.api_base_url() == "http://from-shell:2"
+    assert ui.launch_settings()[1] == 1111
+
+
+def test_importing_the_module_does_not_read_a_env_file():
+    import importlib
+    from unittest import mock
+
+    with mock.patch("dotenv.load_dotenv") as loader:
+        importlib.reload(ui)
+    importlib.reload(ui)  # drop the mock the first reload bound into the module
+    assert loader.call_count == 0

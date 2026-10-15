@@ -387,3 +387,29 @@ def test_query_rejects_bad_session_id(client, session_id):
         ask(client, "How do I declare a query parameter?", session_id).status_code
         == 422
     )
+
+
+def test_provider_failure_inside_the_graph_returns_502_not_a_no_answer(client):
+    from app.graph.builder import build_graph
+    from tests.fakes import FakeRetriever, make_deps, make_doc
+
+    def broken_grader(variables):
+        raise RuntimeError("Error code: 404 - model_not_found (secret-model-name)")
+
+    retriever = FakeRetriever(lambda query: [make_doc("a.md", "A", "text")])
+    deps = make_deps(retriever, grade=broken_grader)
+    client.app.state.graph = build_graph(deps, enable_grounding_check=False)
+
+    resp = ask(client, "How do I declare a query parameter?", "session-a")
+
+    assert resp.status_code == 502
+    assert (
+        resp.json()["detail"]
+        == "The answer could not be generated. Please try again later."
+    )
+    assert "secret-model-name" not in resp.text
+    # a failed question must not leave a half-recorded turn behind
+    ok_graph = FakeGraph()
+    client.app.state.graph = ok_graph
+    ask(client, "What about optional ones?", "session-a")
+    assert ok_graph.calls[0]["history"] == []

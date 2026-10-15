@@ -283,3 +283,16 @@ def test_main_exits_when_the_index_is_empty(monkeypatch, tmp_path):
         evaluate.main(["--output", str(tmp_path / "out.json")])
 
     assert "index is empty" in str(exc.value)
+
+
+def test_a_provider_error_is_recorded_as_an_error_not_as_no_answer():
+    from app.graph.nodes import ProviderError
+
+    def run(question):
+        raise ProviderError("every grading call failed: NotFoundError: model_not_found")
+
+    result = evaluate.run_question(OUT_OF_SCOPE, run)
+
+    assert result["actual"] == "error"
+    assert result["correct"] is False
+    assert result["error"].startswith("ProviderError: every grading call failed")

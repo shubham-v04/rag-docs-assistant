@@ -2,7 +2,7 @@
 
 A question-answering service over technical documentation. You ask a question, it retrieves chunks from a local vector store, checks each chunk for relevance, and writes an answer that cites the files it used. If nothing relevant turns up, it rewrites the query and tries again a limited number of times, then says it does not know.
 
-It is built with LangGraph, FastAPI, ChromaDB, local sentence-transformers embeddings and Groq-hosted Llama models.
+It is built with LangGraph, FastAPI, ChromaDB, local sentence-transformers embeddings and Groq-hosted models. I tested it with `openai/gpt-oss-20b`.
 
 ## Corpus
 
@@ -37,9 +37,9 @@ With `ENABLE_HALLUCINATION_CHECK=false`, `generate` goes straight to the end and
 |---|---|
 | `analyze_query` | One structured LLM call. Returns a standalone version of the question, a keyword-style search query with synonyms, and the query type (conceptual, how-to, troubleshooting, api-reference). The only node that sees conversation history. |
 | `retrieve` | Similarity search on `search_query`, top `TOP_K` chunks. The similarity score is added to each chunk's metadata. |
-| `grade_documents` | One structured LLM call per chunk, run in parallel with `.batch` (5 at a time). Keeps the chunks marked relevant. A call that fails or cannot be parsed counts as irrelevant and is logged. |
+| `grade_documents` | One structured LLM call per chunk, run in parallel with `.batch` (5 at a time). Keeps the chunks marked relevant. One call that fails or cannot be parsed counts as irrelevant and is logged. If every call in a round fails, the run ends with a provider error instead of looking like a miss. |
 | `rewrite_query` | Asks for a different query, given the standalone question and the query that failed. Increments `retry_count`. |
-| `generate` | Answers only from the relevant chunks and cites them inline as `[source: file.md]`. Returns a de-duplicated source list (source, title, header path). On a regeneration it also receives the unsupported claims to avoid. |
+| `generate` | Answers only from the relevant chunks and cites them inline as `[source: file.md]`. Returns a de-duplicated source list (source, title, header path). On a regeneration it also receives the unsupported claims to avoid. If the call fails, the run ends with a provider error. |
 | `check_grounding` | Asks an LLM which claims in the answer the chunks do not support. If the call itself fails it logs a warning and lets the answer through. |
 | `unverified` | Returns `no_answer=true` with a message saying the answer could not be verified. |
 | `no_answer` | Returns `no_answer=true` with a "could not find this in the indexed documentation" message and no sources. |
@@ -53,6 +53,7 @@ With `ENABLE_HALLUCINATION_CHECK=false`, `generate` goes straight to the end and
 - `search_query` is the retrieval string. `analyze_query` sets it and `rewrite_query` replaces it on a retry. I kept it separate from `standalone_question` because it is keyword-heavy and changes between attempts, which makes it a poor thing to grade or answer against.
 - `retry_count` starts at 0 and only `rewrite_query` increments it. It goes up even when the rewrite fails or returns the same query, so the loop always ends. The router sends the flow back to `rewrite_query` while `retry_count < max_retries`, so a question gets at most `1 + max_retries` retrievals.
 - `regenerate_count` is incremented by `generate` only when it is redoing an answer after a failed grounding check. The router allows one regeneration, so at most two answers are written per question.
+- `provider_error` is set when every grading call in a round fails, or when the answer call fails. The graph ends there and `run_graph` raises `ProviderError`, which is how a broken provider stays distinct from "the docs have no answer".
 - `grounded` is `True`, `False`, or `None` when the check did not run or its call failed. `None` is treated like `True`.
 - `trace` collects the visited node names through a list-concatenating reducer. It is returned by `run_graph` and printed by `scripts/ask.py`.
 
@@ -91,9 +92,9 @@ Put your key in `.env` as `GROQ_API_KEY=...`, or export it in the shell. Environ
 | Variable | Default | Meaning |
 |---|---|---|
 | `GROQ_API_KEY` | empty | Groq API key. Without it the API still starts, but `/query` returns 503. |
-| `GENERATION_MODEL` | `llama-3.3-70b-versatile` | Writes the answer. |
-| `GRADER_MODEL` | `llama-3.1-8b-instant` | Query analysis, chunk grading and query rewriting. |
-| `GROUNDING_MODEL` | `llama-3.3-70b-versatile` | Checks the answer against the chunks. |
+| `GENERATION_MODEL` | `openai/gpt-oss-20b` | Writes the answer. |
+| `GRADER_MODEL` | `openai/gpt-oss-20b` | Query analysis, chunk grading and query rewriting. |
+| `GROUNDING_MODEL` | `openai/gpt-oss-20b` | Checks the answer against the chunks. |
 | `EMBEDDING_MODEL` | `sentence-transformers/all-MiniLM-L6-v2` | Local embedding model. |
 | `CHROMA_DIR` | `chroma_db` | Where Chroma persists the index. |
 | `FEEDBACK_DB` | `data/feedback.sqlite3` | SQLite file for queries and feedback. |
@@ -105,7 +106,9 @@ Put your key in `.env` as `GROQ_API_KEY=...`, or export it in the shell. Environ
 | `ENABLE_MEMORY` | `true` | Keeps per-session history for follow-up questions. |
 | `API_BASE_URL` | `http://localhost:8000` | Where `ui.py` finds the API. |
 
-`ui.py` reads `API_BASE_URL`, `UI_HOST` (default `127.0.0.1`) and `UI_PORT` (default `7860`) from the process environment only. It does not load `.env`, so export them if you change them.
+The model defaults are the ones I tested. Groq accounts differ in which models they may use: with my key `llama-3.1-8b-instant` and `llama-3.3-70b-versatile` came back as 404 `model_not_found`, while `openai/gpt-oss-20b` worked for every step. If your account is refused a model, set `GENERATION_MODEL`, `GRADER_MODEL` and `GROUNDING_MODEL` in `.env` or in the shell; each one is independent, so you can use a larger model for generation only.
+
+`ui.py` reads `API_BASE_URL`, `UI_HOST` (default `127.0.0.1`) and `UI_PORT` (default `7860`) from `.env` in the repository root and from the environment. A variable set in the shell wins over the file.
 
 The corpus is already in `data/corpus/`. To download it again, run `python scripts/fetch_corpus.py`; files that already exist are skipped. Then build the index:
 
@@ -178,13 +181,13 @@ Response shape (this is the structure, not a captured answer):
 
 <!-- TODO: replace with a real response from a live run -->
 
-`no_answer` is true when nothing relevant was found, when the answer could not be verified, and when answer generation failed. In those cases `sources` is empty.
+`no_answer` is true when nothing relevant was found or when the answer could not be verified. In both cases `sources` is empty.
 
 | Status | When |
 |---|---|
 | 200 | An answer or a "not found" response. |
 | 422 | Question outside 3 to 1000 characters, or a bad `session_id`. |
-| 502 | An exception escaped the graph. The detail is logged, the client gets a generic message. |
+| 502 | The graph raised: every grading call failed, answer generation failed, or something else broke. The detail is logged, the client gets a generic message. |
 | 503 | The index is empty, or no `GROQ_API_KEY` is configured. |
 
 Real error responses from the server without a key:
@@ -254,9 +257,11 @@ curl -s localhost:8000/health
 
 **Chroma.** It runs in-process, persists to a directory and needs no server, which suits a take-home. It is a single-node store, and I write chunks through its underlying collection so the embedded text can differ from the stored text.
 
-**Models.** The 8b model does query analysis, grading and rewriting, which are many short calls with small structured outputs. The 70b model writes the answer. I also chose the 70b model for the grounding check because judging whether a claim is supported seems harder than judging topical relevance; I have not compared the two. All calls use temperature 0, a 30 second timeout and the SDK's two retries.
+**Models.** All three roles (query analysis, grading and rewriting; answer generation; the grounding check) default to `openai/gpt-oss-20b`, because that is the model that worked with my key for every step. They stay three separate settings. A small model for the many short grading calls and a larger one for the answer and the grounding check is the split I would try first, but I have not compared them. All calls use temperature 0, a 30 second timeout and the SDK's two retries.
 
-**Grading cost.** Grading is one call per retrieved chunk, so a retrieval costs `TOP_K` calls. They run in parallel, so latency is roughly the slowest call, but it counts against rate limits, and with the default `MAX_RETRIES=2` a question that exhausts its retries makes `3 * TOP_K` grading calls. A single call that ranks all chunks would be cheaper, but one malformed output would then lose the whole batch. Per-chunk calls fail one chunk at a time.
+**Grading cost.** Grading is one call per retrieved chunk, so a retrieval costs `TOP_K` calls. They run in parallel, so latency is roughly the slowest call, but it counts against rate limits, and with the default `MAX_RETRIES=2` a question that exhausts its retries makes `3 * TOP_K` grading calls. A single call that ranks all chunks would be cheaper, but one malformed output would then lose the whole batch. Per-chunk calls fail one chunk at a time, and a round where all of them fail is reported as a provider error.
+
+**Provider errors.** A model that returns 404, a revoked key or an outage must not look like a question the docs cannot answer. If every grading call in a round fails (an exception or unparseable output for every chunk), the graph stops, retrying would only repeat the failure, and `run_graph` raises `ProviderError`. The API turns that into a 502 with a generic message, `scripts/ask.py` prints the detail, and the evaluation script records the question as an error. Failed answer generation is handled the same way. The other steps degrade quietly and log a warning: a failed analysis searches with the raw question, a failed rewrite keeps the old query, a failed grounding check lets the answer through.
 
 **Retry loop.** The limit is a counter in state (`MAX_RETRIES`, default 2) that rises on every rewrite, including a failed one. LangGraph's recursion limit is set to `3 * max_retries + 15` as a second guard.
 
@@ -276,7 +281,7 @@ curl -s localhost:8000/health
 
 The set has 10 questions. Seven are answerable from the corpus, each with the file that should be cited: two on query parameters, two on first steps, and one each on path parameters, request body and dependencies. Three are clearly out of scope (a PyTorch CNN, a Kubernetes ingress, the capital of Australia) and should end in `no_answer`.
 
-"Correct routing" means the graph answered when it should have and declined when it should have. "Expected source found" only counts for the seven answerable questions. A question that raises an error is recorded with the error text and the run continues. The script exits with a message if `GROQ_API_KEY` is unset or the index is empty. This checks routing and retrieval, not the quality of the answer text, and ten questions is a small sample.
+"Correct routing" means the graph answered when it should have and declined when it should have. "Expected source found" only counts for the seven answerable questions. A question that raises an error, including a provider error such as a refused model, is recorded with the error text and the run continues. The script exits with a message if `GROQ_API_KEY` is unset or the index is empty. This checks routing and retrieval, not the quality of the answer text, and ten questions is a small sample.
 
 ### Results
 
@@ -289,8 +294,8 @@ Assumptions: the documents are English markdown, text or simple HTML; the API is
 Known limitations:
 
 - No authentication and no rate limiting on the API.
-- When an LLM call fails inside the graph, the node recovers and the user gets a normal 200 response, for example "not found" if every grading call failed. Only the log tells the two cases apart.
-- Titles of ingested files can carry MkDocs syntax. For example the CORS page ingested by URL kept `{ #cors-cross-origin-resource-sharing }` in its title, because only `fetch_corpus.py` cleans that markup.
+- Some LLM failures are absorbed on purpose (analysis, rewrite, grounding check, a single grading call), so the user gets a normal response and only the log shows the problem.
+- Ingested markdown only has `{ #anchor }` removed from headings. Other MkDocs syntax, such as include markers and `///` admonitions, is cleaned by `fetch_corpus.py` only. Documents ingested before the anchor cleanup keep their old titles until they are ingested again.
 - HTML is reduced to plain text, so tables and code layout are lost. There is no PDF support.
 - There is no endpoint to delete a document, and two concurrent ingests of the same source can interleave.
 - `query_type` is returned but does not change retrieval or prompting yet.

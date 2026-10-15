@@ -11,6 +11,8 @@ logger = logging.getLogger(__name__)
 
 SUPPORTED_SUFFIXES = {".md", ".markdown", ".txt", ".html", ".htm"}
 _H1_RE = re.compile(r"^#\s+(.+?)\s*$", re.MULTILINE)
+# MkDocs writes explicit anchors as "## Title { #title }"; they are noise once indexed
+_HEADING_ANCHOR_RE = re.compile(r"^(#{1,6}\s+.*?)[ \t]*\{\s*#[\w-]+\s*\}[ \t]*$")
 
 
 @dataclass
@@ -23,6 +25,19 @@ class LoadedDocument:
 
 def _decode(data: bytes) -> str:
     return data.decode("utf-8", errors="replace")
+
+
+def strip_heading_anchors(text: str) -> str:
+    """Remove "{ #id }" from heading lines, leaving code fences alone."""
+    lines = []
+    in_fence = False
+    for line in text.split("\n"):
+        if line.startswith("```"):
+            in_fence = not in_fence
+        elif not in_fence:
+            line = _HEADING_ANCHOR_RE.sub(r"\1", line)
+        lines.append(line)
+    return "\n".join(lines)
 
 
 def _markdown_title(text: str, fallback: str) -> str:
@@ -65,6 +80,7 @@ def load_bytes(data: bytes, filename: str, source: str | None = None) -> LoadedD
 
     text = raw.strip()
     if suffix in {".md", ".markdown"}:
+        text = strip_heading_anchors(text)
         return LoadedDocument(
             text, name, _markdown_title(text, fallback_title), is_markdown=True
         )

@@ -23,7 +23,11 @@ UNVERIFIED_MESSAGE = (
     "I found documentation related to your question, but I could not verify an answer "
     "against it, so I am not going to guess. Try rephrasing or narrowing the question."
 )
-GENERATION_ERROR_MESSAGE = "I found relevant documentation but could not generate an answer right now. Please try again."
+ERROR_DETAIL_CHARS = 300
+
+
+class ProviderError(RuntimeError):
+    """The language model provider failed, as opposed to the docs not having an answer."""
 
 
 class QueryAnalysis(BaseModel):
@@ -126,16 +130,28 @@ def grade_documents(state: GraphState, deps: GraphDeps) -> dict:
     )
 
     relevant: list[Document] = []
+    failed = []
     for doc, grade in zip(documents, grades):
         if not isinstance(grade, ChunkGrade):
-            # an unparseable or failed grade must not let a chunk through
+            # one unparseable or failed grade must not let a chunk through
             logger.warning(
                 "could not grade %s, treating as irrelevant: %r",
                 chunk_label(doc),
                 grade,
             )
+            failed.append(grade)
         elif grade.relevant:
             relevant.append(doc)
+
+    if documents and len(failed) == len(documents):
+        # every call failed, so "irrelevant" would only be a guess. Report the failure.
+        error = f"every grading call failed: {describe_error(failed[0])}"
+        logger.error(error)
+        return {
+            "relevant_documents": [],
+            "provider_error": error,
+            "trace": ["grade_documents"],
+        }
     return {"relevant_documents": relevant, "trace": ["grade_documents"]}
 
 
@@ -175,12 +191,10 @@ def generate(state: GraphState, deps: GraphDeps) -> dict:
                 "extra_instructions": extra,
             }
         )
-    except Exception:
+    except Exception as exc:
         logger.exception("answer generation failed")
         return {
-            "answer": GENERATION_ERROR_MESSAGE,
-            "sources": [],
-            "no_answer": True,
+            "provider_error": f"answer generation failed: {describe_error(exc)}",
             "trace": ["generate"],
         }
     return {
@@ -193,7 +207,7 @@ def generate(state: GraphState, deps: GraphDeps) -> dict:
 
 
 def check_grounding(state: GraphState, deps: GraphDeps) -> dict:
-    if state["no_answer"]:
+    if state["provider_error"]:
         # generation already failed, there is no answer to verify
         return {"grounded": None, "trace": ["check_grounding"]}
 
@@ -233,6 +247,14 @@ def no_answer(state: GraphState) -> dict:
         "no_answer": True,
         "trace": ["no_answer"],
     }
+
+
+def describe_error(error: object) -> str:
+    if isinstance(error, BaseException):
+        text = f"{type(error).__name__}: {error}"
+    else:
+        text = "the model output could not be parsed"
+    return text[:ERROR_DETAIL_CHARS]
 
 
 def stricter_instructions(claims: list[str]) -> str:

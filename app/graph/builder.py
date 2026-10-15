@@ -11,6 +11,7 @@ from app.graph.nodes import (
     ChunkGrade,
     GraphDeps,
     GroundingResult,
+    ProviderError,
     QueryAnalysis,
     RewrittenQuery,
     analyze_query,
@@ -34,7 +35,9 @@ from app.graph.state import GraphState, Turn, initial_state
 
 def decide_after_grading(
     state: GraphState,
-) -> Literal["generate", "rewrite_query", "no_answer"]:
+) -> Literal["generate", "rewrite_query", "no_answer", "provider_error"]:
+    if state["provider_error"]:
+        return "provider_error"
     if state["relevant_documents"]:
         return "generate"
     if state["retry_count"] < state["max_retries"]:
@@ -79,6 +82,7 @@ def build_graph(deps: GraphDeps, enable_grounding_check: bool | None = None):
             "generate": "generate",
             "rewrite_query": "rewrite_query",
             "no_answer": "no_answer",
+            "provider_error": END,
         },
     )
     graph.add_edge("rewrite_query", "retrieve")
@@ -144,6 +148,8 @@ def run_graph(
     config = {"recursion_limit": 3 * max_retries + 15}
     state = initial_state(question, max_retries, history)
     final = graph.invoke(state, config=config)
+    if final["provider_error"]:
+        raise ProviderError(final["provider_error"])
     return {
         "answer": final["answer"],
         "sources": final["sources"],

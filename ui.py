@@ -5,11 +5,14 @@ Start the API first (uvicorn app.api.main:app), then run: python ui.py
 
 import os
 import uuid
+from pathlib import Path
 
 import gradio as gr
 import httpx
+from dotenv import load_dotenv
 
-API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000").rstrip("/")
+ENV_FILE = Path(__file__).resolve().parent / ".env"
+DEFAULT_API_BASE_URL = "http://localhost:8000"
 # a full run does several LLM calls, so allow for a slow answer
 REQUEST_TIMEOUT_SECONDS = 120
 
@@ -18,8 +21,21 @@ class ApiError(Exception):
     """An API problem, worded so it can be shown to the user as is."""
 
 
+def load_env(path: Path = ENV_FILE) -> None:
+    # variables already set in the shell win over the file
+    load_dotenv(path)
+
+
+def api_base_url() -> str:
+    return os.getenv("API_BASE_URL", DEFAULT_API_BASE_URL).rstrip("/")
+
+
+def launch_settings() -> tuple[str, int]:
+    return os.getenv("UI_HOST", "127.0.0.1"), int(os.getenv("UI_PORT", "7860"))
+
+
 def make_client() -> httpx.Client:
-    return httpx.Client(base_url=API_BASE_URL, timeout=REQUEST_TIMEOUT_SECONDS)
+    return httpx.Client(base_url=api_base_url(), timeout=REQUEST_TIMEOUT_SECONDS)
 
 
 def describe_http_error(response: httpx.Response) -> str:
@@ -137,7 +153,7 @@ def build_ui() -> gr.Blocks:
 
 
 if __name__ == "__main__":
-    build_ui().launch(
-        server_name=os.getenv("UI_HOST", "127.0.0.1"),
-        server_port=int(os.getenv("UI_PORT", "7860")),
-    )
+    # only when run as a script, so importing this module never reads a .env file
+    load_env()
+    host, port = launch_settings()
+    build_ui().launch(server_name=host, server_port=port)
