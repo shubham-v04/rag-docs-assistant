@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from app.api.main import create_app
 from app.services.feedback import FeedbackStore
 from app.services.ingestion import MAX_FILE_BYTES, IngestFailure, check_public_host
+from app.services.memory import ConversationMemory
 
 SOURCES = [
     {
@@ -55,6 +56,7 @@ def client(fake_graph, store, monkeypatch):
     # no `with` block, so the lifespan (embedding model, real graph) is not started
     app.state.graph = fake_graph
     app.state.feedback = store
+    app.state.memory = ConversationMemory()
     monkeypatch.setattr("app.services.query.chunk_count", lambda: 84)
     monkeypatch.setattr(
         "app.services.ingestion.ingest_documents",
@@ -93,6 +95,7 @@ def test_query_happy_path(client, fake_graph, store):
         "query_type",
         "retries",
         "no_answer",
+        "session_id",
     }
     assert body["answer"].startswith("Give it a default of None.")
     assert body["sources"] == SOURCES
@@ -326,3 +329,61 @@ def test_documents_lists_indexed_files(client, monkeypatch):
     resp = client.get("/documents")
     assert resp.status_code == 200
     assert resp.json() == docs
+
+
+# --- /query with sessions ----------------------------------------------------
+
+
+def ask(client, question: str, session_id: str | None = None):
+    payload = {"question": question}
+    if session_id:
+        payload["session_id"] = session_id
+    return client.post("/query", json=payload)
+
+
+def test_query_echoes_session_id_and_passes_history_to_the_graph(client, fake_graph):
+    first = ask(client, "How do I declare a query parameter?", "session-a")
+    second = ask(client, "What about optional ones?", "session-a")
+
+    assert first.json()["session_id"] == "session-a"
+    assert second.json()["session_id"] == "session-a"
+    assert fake_graph.calls[0]["history"] == []
+    assert fake_graph.calls[1]["history"] == [
+        {
+            "question": "How do I declare a query parameter?",
+            "answer": "Give it a default of None. [source: query-params.md]",
+        }
+    ]
+
+
+def test_sessions_do_not_share_history(client, fake_graph):
+    ask(client, "Question from session A", "session-a")
+    ask(client, "Question from session B", "session-b")
+
+    assert fake_graph.calls[1]["history"] == []
+
+
+def test_query_without_session_id_is_stateless(client, fake_graph):
+    first = ask(client, "How do I declare a query parameter?")
+    ask(client, "What about optional ones?")
+
+    assert first.json()["session_id"] is None
+    assert fake_graph.calls[1]["history"] == []
+
+
+def test_session_id_is_ignored_when_memory_is_off(client, fake_graph):
+    client.app.state.memory = None
+    first = ask(client, "How do I declare a query parameter?", "session-a")
+    ask(client, "What about optional ones?", "session-a")
+
+    assert first.status_code == 200
+    assert first.json()["session_id"] is None
+    assert fake_graph.calls[1]["history"] == []
+
+
+@pytest.mark.parametrize("session_id", ["has space", "x" * 65, "semi;colon"])
+def test_query_rejects_bad_session_id(client, session_id):
+    assert (
+        ask(client, "How do I declare a query parameter?", session_id).status_code
+        == 422
+    )

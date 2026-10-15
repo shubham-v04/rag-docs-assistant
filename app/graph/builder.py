@@ -7,24 +7,29 @@ from langgraph.graph import END, START, StateGraph
 from app.config import get_settings
 from app.graph.llm import get_llm
 from app.graph.nodes import (
+    MAX_REGENERATIONS,
     ChunkGrade,
     GraphDeps,
+    GroundingResult,
     QueryAnalysis,
     RewrittenQuery,
     analyze_query,
+    check_grounding,
     generate,
     grade_documents,
     no_answer,
     retrieve,
     rewrite_query,
+    unverified,
 )
 from app.graph.prompts import (
     ANALYZE_PROMPT,
     GENERATE_PROMPT,
     GRADE_PROMPT,
+    GROUNDING_PROMPT,
     REWRITE_PROMPT,
 )
-from app.graph.state import GraphState, initial_state
+from app.graph.state import GraphState, Turn, initial_state
 
 
 def decide_after_grading(
@@ -37,7 +42,25 @@ def decide_after_grading(
     return "no_answer"
 
 
-def build_graph(deps: GraphDeps):
+def decide_after_grounding(
+    state: GraphState,
+) -> Literal["end", "regenerate", "unverified"]:
+    # None means the check did not run or failed: let the answer through
+    if state["grounded"] is not False:
+        return "end"
+    if state["regenerate_count"] < MAX_REGENERATIONS:
+        return "regenerate"
+    return "unverified"
+
+
+def build_graph(deps: GraphDeps, enable_grounding_check: bool | None = None):
+    if enable_grounding_check is None:
+        enable_grounding_check = get_settings().enable_hallucination_check
+    if enable_grounding_check and deps.grounding_checker is None:
+        raise ValueError(
+            "the grounding check is enabled but deps has no grounding_checker"
+        )
+
     graph = StateGraph(GraphState)
     graph.add_node("analyze_query", partial(analyze_query, deps=deps))
     graph.add_node("retrieve", partial(retrieve, deps=deps))
@@ -59,8 +82,20 @@ def build_graph(deps: GraphDeps):
         },
     )
     graph.add_edge("rewrite_query", "retrieve")
-    graph.add_edge("generate", END)
     graph.add_edge("no_answer", END)
+
+    if enable_grounding_check:
+        graph.add_node("check_grounding", partial(check_grounding, deps=deps))
+        graph.add_node("unverified", unverified)
+        graph.add_edge("generate", "check_grounding")
+        graph.add_conditional_edges(
+            "check_grounding",
+            decide_after_grounding,
+            {"end": END, "regenerate": "generate", "unverified": "unverified"},
+        )
+        graph.add_edge("unverified", END)
+    else:
+        graph.add_edge("generate", END)
     return graph.compile()
 
 
@@ -84,6 +119,8 @@ def default_deps() -> GraphDeps:
         generator=GENERATE_PROMPT | answer_llm | StrOutputParser(),
         retriever=retriever,
         top_k=settings.top_k,
+        grounding_checker=GROUNDING_PROMPT
+        | get_llm(settings.grounding_model).with_structured_output(GroundingResult),
     )
 
 
@@ -92,14 +129,21 @@ def get_graph():
     return build_graph(default_deps())
 
 
-def run_graph(question: str, graph=None, max_retries: int | None = None) -> dict:
+def run_graph(
+    question: str,
+    graph=None,
+    max_retries: int | None = None,
+    history: list[Turn] | None = None,
+) -> dict:
     graph = graph or get_graph()
     if max_retries is None:
         max_retries = get_settings().max_retries
 
-    # each retry adds rewrite_query, retrieve and grade_documents to the step count
-    config = {"recursion_limit": 3 * max_retries + 10}
-    final = graph.invoke(initial_state(question, max_retries), config=config)
+    # each retry adds rewrite_query, retrieve and grade_documents to the step count,
+    # and the grounding check can add a second generate and check on top
+    config = {"recursion_limit": 3 * max_retries + 15}
+    state = initial_state(question, max_retries, history)
+    final = graph.invoke(state, config=config)
     return {
         "answer": final["answer"],
         "sources": final["sources"],
@@ -108,4 +152,5 @@ def run_graph(question: str, graph=None, max_retries: int | None = None) -> dict
         "trace": final["trace"],
         "search_query": final["search_query"],
         "no_answer": final["no_answer"],
+        "grounded": final["grounded"],
     }

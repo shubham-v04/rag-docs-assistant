@@ -6,16 +6,22 @@ from langchain_core.documents import Document
 from langchain_core.runnables import Runnable
 from pydantic import BaseModel, Field
 
-from app.graph.state import GraphState, QueryType, Source
+from app.graph.state import GraphState, QueryType, Source, Turn
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_QUERY_TYPE: QueryType = "conceptual"
 GRADER_CONCURRENCY = 5
+MAX_REGENERATIONS = 1
+HISTORY_ANSWER_CHARS = 600
 
 NO_ANSWER_MESSAGE = (
     "I could not find this in the indexed documentation. "
     "Try rephrasing the question, or ingest documents that cover the topic."
+)
+UNVERIFIED_MESSAGE = (
+    "I found documentation related to your question, but I could not verify an answer "
+    "against it, so I am not going to guess. Try rephrasing or narrowing the question."
 )
 GENERATION_ERROR_MESSAGE = "I found relevant documentation but could not generate an answer right now. Please try again."
 
@@ -37,6 +43,15 @@ class ChunkGrade(BaseModel):
     relevant: bool = Field(description="True if the excerpt helps answer the question")
 
 
+class GroundingResult(BaseModel):
+    grounded: bool = Field(
+        description="True if every claim is supported by the excerpts"
+    )
+    unsupported_claims: list[str] = Field(
+        default_factory=list, description="Claims the excerpts do not support"
+    )
+
+
 # Takes a query and k, returns (chunk, similarity) pairs with higher meaning closer.
 Retriever = Callable[[str, int], list[tuple[Document, float]]]
 
@@ -55,12 +70,16 @@ class GraphDeps:
     generator: Runnable
     retriever: Retriever
     top_k: int
+    # only needed when the hallucination check is switched on
+    grounding_checker: Runnable | None = None
 
 
 def analyze_query(state: GraphState, deps: GraphDeps) -> dict:
     question = state["question"]
     try:
-        result = deps.analyzer.invoke({"question": question})
+        result = deps.analyzer.invoke(
+            {"question": question, "history": format_history(state["history"])}
+        )
         search_query = result.search_query.strip() or question
         query_type = result.query_type
     except Exception:
@@ -137,9 +156,16 @@ def rewrite_query(state: GraphState, deps: GraphDeps) -> dict:
 def generate(state: GraphState, deps: GraphDeps) -> dict:
     documents = state["relevant_documents"]
     context = "\n\n---\n\n".join(format_chunk(doc) for doc in documents)
+    # a failed grounding check sends us back here with the claims to avoid
+    regenerating = state["grounded"] is False
+    extra = stricter_instructions(state["unsupported_claims"]) if regenerating else ""
     try:
         answer = deps.generator.invoke(
-            {"question": state["question"], "context": context}
+            {
+                "question": state["question"],
+                "context": context,
+                "extra_instructions": extra,
+            }
         )
     except Exception:
         logger.exception("answer generation failed")
@@ -153,7 +179,42 @@ def generate(state: GraphState, deps: GraphDeps) -> dict:
         "answer": answer.strip(),
         "sources": unique_sources(documents),
         "no_answer": False,
+        "regenerate_count": state["regenerate_count"] + int(regenerating),
         "trace": ["generate"],
+    }
+
+
+def check_grounding(state: GraphState, deps: GraphDeps) -> dict:
+    if state["no_answer"]:
+        # generation already failed, there is no answer to verify
+        return {"grounded": None, "trace": ["check_grounding"]}
+
+    context = "\n\n---\n\n".join(
+        format_chunk(doc) for doc in state["relevant_documents"]
+    )
+    try:
+        result = deps.grounding_checker.invoke(
+            {"context": context, "answer": state["answer"]}
+        )
+    except Exception:
+        # a broken checker should not block an answer the user is waiting for
+        logger.warning(
+            "grounding check failed, passing the answer through", exc_info=True
+        )
+        return {"grounded": None, "trace": ["check_grounding"]}
+    return {
+        "grounded": result.grounded,
+        "unsupported_claims": result.unsupported_claims,
+        "trace": ["check_grounding"],
+    }
+
+
+def unverified(state: GraphState) -> dict:
+    return {
+        "answer": UNVERIFIED_MESSAGE,
+        "sources": [],
+        "no_answer": True,
+        "trace": ["unverified"],
     }
 
 
@@ -164,6 +225,25 @@ def no_answer(state: GraphState) -> dict:
         "no_answer": True,
         "trace": ["no_answer"],
     }
+
+
+def stricter_instructions(claims: list[str]) -> str:
+    listed = "\n".join(f"- {claim}" for claim in claims) or "- (not specified)"
+    return (
+        "Your previous answer contained claims the excerpts do not support:\n"
+        f"{listed}\n"
+        "Write the answer again. Remove or correct those claims and state only what "
+        "the excerpts say."
+    )
+
+
+def format_history(history: list[Turn]) -> str:
+    if not history:
+        return "(none)"
+    return "\n".join(
+        f"User: {turn['question']}\nAssistant: {turn['answer'][:HISTORY_ANSWER_CHARS]}"
+        for turn in history
+    )
 
 
 def format_chunk(doc: Document) -> str:

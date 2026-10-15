@@ -28,6 +28,7 @@ from app.api.schemas import (
 from app.ingestion.indexer import list_documents
 from app.services.feedback import FeedbackStore, UnknownQueryError
 from app.services.ingestion import ingest_sources
+from app.services.memory import ConversationMemory
 from app.services.query import IndexEmptyError, QueryFailedError, answer_question
 
 logger = logging.getLogger(__name__)
@@ -46,8 +47,13 @@ def get_feedback_store(request: Request) -> FeedbackStore:
     return request.app.state.feedback
 
 
+def get_memory(request: Request) -> ConversationMemory | None:
+    return request.app.state.memory
+
+
 GraphDep = Annotated[Any, Depends(get_graph)]
 StoreDep = Annotated[FeedbackStore, Depends(get_feedback_store)]
+MemoryDep = Annotated[ConversationMemory | None, Depends(get_memory)]
 
 
 @router.get("/health")
@@ -56,12 +62,12 @@ def health(request: Request) -> dict:
 
 
 @router.post("/query", response_model=QueryResponse)
-def query(body: QueryRequest, graph: GraphDep, store: StoreDep):
+def query(body: QueryRequest, graph: GraphDep, store: StoreDep, memory: MemoryDep):
     # checked here, not in the dependency, so a malformed body still gets a 422 first
     if graph is None:
         raise HTTPException(503, "The language model is not configured on the server.")
     try:
-        result = answer_question(body.question, graph, store)
+        result = answer_question(body.question, graph, store, memory, body.session_id)
     except IndexEmptyError:
         raise HTTPException(
             503, "The index is empty. Ingest documents first (POST /ingest)."

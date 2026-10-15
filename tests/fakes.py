@@ -3,7 +3,13 @@ from collections.abc import Callable
 from langchain_core.documents import Document
 from langchain_core.runnables import RunnableLambda
 
-from app.graph.nodes import ChunkGrade, GraphDeps, QueryAnalysis, RewrittenQuery
+from app.graph.nodes import (
+    ChunkGrade,
+    GraphDeps,
+    GroundingResult,
+    QueryAnalysis,
+    RewrittenQuery,
+)
 
 
 def make_doc(source: str, header_path: str, text: str, index: int = 0) -> Document:
@@ -40,6 +46,7 @@ def make_deps(
     analyze: Callable[[dict], QueryAnalysis] | None = None,
     rewrite: Callable[[dict], RewrittenQuery] | None = None,
     generate: Callable[[dict], str] | None = None,
+    grounding: Callable[[dict], GroundingResult] | None = None,
     top_k: int = 3,
 ) -> GraphDeps:
     return GraphDeps(
@@ -59,4 +66,7 @@ def make_deps(
         generator=RunnableLambda(generate or (lambda v: "an answer [source: a.md]")),
         retriever=retriever,
         top_k=top_k,
+        grounding_checker=RunnableLambda(
+            grounding or (lambda v: GroundingResult(grounded=True))
+        ),
     )

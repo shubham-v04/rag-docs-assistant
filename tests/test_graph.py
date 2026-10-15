@@ -39,7 +39,9 @@ def test_happy_path_generates_with_deduplicated_sources():
     deps = make_deps(
         retriever, grade, analyze=lambda v: ANALYZE_EXPANDED, generate=generate, top_k=3
     )
-    result = run_graph(QUESTION, graph=build_graph(deps), max_retries=2)
+    result = run_graph(
+        QUESTION, graph=build_graph(deps, enable_grounding_check=False), max_retries=2
+    )
 
     assert result["trace"] == [
         "analyze_query",
@@ -81,7 +83,9 @@ def test_retries_until_limit_then_gives_up():
         generate=lambda v: generated.append(v) or "should not run",
     )
     result = run_graph(
-        "How do I train a CNN in PyTorch?", graph=build_graph(deps), max_retries=2
+        "How do I train a CNN in PyTorch?",
+        graph=build_graph(deps, enable_grounding_check=False),
+        max_retries=2,
     )
 
     assert result["trace"] == [
@@ -107,7 +111,9 @@ def test_retries_until_limit_then_gives_up():
 def test_zero_retries_gives_up_after_first_attempt():
     retriever = FakeRetriever(lambda query: [BODY])
     deps = make_deps(retriever, grade=lambda v: False)
-    result = run_graph(QUESTION, graph=build_graph(deps), max_retries=0)
+    result = run_graph(
+        QUESTION, graph=build_graph(deps, enable_grounding_check=False), max_retries=0
+    )
 
     assert len(retriever.calls) == 1
     assert result["trace"][-1] == "no_answer"
@@ -124,7 +130,9 @@ def test_rewritten_query_can_recover_and_reach_generate():
         grade=mentions_defaults,
         rewrite=lambda v: RewrittenQuery(search_query="better query"),
     )
-    result = run_graph(QUESTION, graph=build_graph(deps), max_retries=2)
+    result = run_graph(
+        QUESTION, graph=build_graph(deps, enable_grounding_check=False), max_retries=2
+    )
 
     assert result["trace"] == [
         "analyze_query",
@@ -151,7 +159,11 @@ def test_chunk_that_fails_grading_is_dropped_not_fatal(caplog):
 
     deps = make_deps(retriever, grade=grade)
     with caplog.at_level(logging.WARNING):
-        result = run_graph(QUESTION, graph=build_graph(deps), max_retries=0)
+        result = run_graph(
+            QUESTION,
+            graph=build_graph(deps, enable_grounding_check=False),
+            max_retries=0,
+        )
 
     assert result["trace"][-1] == "generate"
     assert [s["source"] for s in result["sources"]] == ["query-params.md"]
@@ -164,7 +176,9 @@ def test_failed_query_analysis_falls_back_to_the_question():
 
     retriever = FakeRetriever(lambda query: [DEFAULTS_A])
     deps = make_deps(retriever, grade=lambda v: True, analyze=broken_analyzer)
-    result = run_graph(QUESTION, graph=build_graph(deps), max_retries=0)
+    result = run_graph(
+        QUESTION, graph=build_graph(deps, enable_grounding_check=False), max_retries=0
+    )
 
     assert retriever.queries == [QUESTION]
     assert result["query_type"] == "conceptual"

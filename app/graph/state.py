@@ -12,6 +12,11 @@ class Source(TypedDict):
     header_path: str
 
 
+class Turn(TypedDict):
+    question: str
+    answer: str
+
+
 class GraphState(TypedDict):
     """State passed between the graph nodes.
 
@@ -30,6 +35,13 @@ class GraphState(TypedDict):
       answer, sources     - generate, or no_answer when nothing relevant was found
       no_answer           - False by default; the no_answer node (or a failed
                             generation) sets it to True
+      history             - earlier turns of the conversation, set once by run_graph and
+                            read only by analyze_query. Grading never sees it.
+      grounded            - check_grounding: True/False, or None if the check did not run
+                            or its LLM call failed (the answer then passes through)
+      unsupported_claims  - check_grounding; generate lists them in its stricter retry
+      regenerate_count    - generate increments it each time it redoes an answer after a
+                            failed grounding check; the router allows one such redo
       trace               - every node appends its own name; the reducer concatenates
                             the lists so nodes only return the entry they add
     """
@@ -44,10 +56,16 @@ class GraphState(TypedDict):
     answer: str
     sources: list[Source]
     no_answer: bool
+    history: list[Turn]
+    grounded: bool | None
+    unsupported_claims: list[str]
+    regenerate_count: int
     trace: Annotated[list[str], operator.add]
 
 
-def initial_state(question: str, max_retries: int) -> GraphState:
+def initial_state(
+    question: str, max_retries: int, history: list[Turn] | None = None
+) -> GraphState:
     return GraphState(
         question=question,
         search_query=question,
@@ -59,5 +77,9 @@ def initial_state(question: str, max_retries: int) -> GraphState:
         answer="",
         sources=[],
         no_answer=False,
+        history=history or [],
+        grounded=None,
+        unsupported_claims=[],
+        regenerate_count=0,
         trace=[],
     )

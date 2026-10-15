@@ -7,10 +7,18 @@ from app.graph.state import QueryType
 Question = Annotated[
     str, StringConstraints(strip_whitespace=True, min_length=3, max_length=1000)
 ]
+SessionId = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True, min_length=1, max_length=64, pattern=r"^[\w.-]+$"
+    ),
+]
 
 
 class QueryRequest(BaseModel):
     question: Question
+    # omit it for a one-off question; reuse it to ask follow-ups
+    session_id: SessionId | None = None
 
 
 class SourceInfo(BaseModel):
@@ -26,6 +34,7 @@ class QueryResponse(BaseModel):
     query_type: QueryType
     retries: int
     no_answer: bool
+    session_id: str | None = None
 
 
 class IngestUrlsRequest(BaseModel):

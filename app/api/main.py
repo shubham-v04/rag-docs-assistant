@@ -8,6 +8,7 @@ from app.config import get_settings
 from app.graph.builder import get_graph
 from app.ingestion.indexer import get_vectorstore
 from app.services.feedback import FeedbackStore
+from app.services.memory import ConversationMemory
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +24,9 @@ def load_graph():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    app.state.feedback = FeedbackStore(get_settings().feedback_db)
+    settings = get_settings()
+    app.state.feedback = FeedbackStore(settings.feedback_db)
+    app.state.memory = ConversationMemory() if settings.enable_memory else None
     get_vectorstore()
     app.state.graph = load_graph()
     yield

@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     generation_model: str = "llama-3.3-70b-versatile"
     # small model for query analysis and grading: cheaper and fast enough
     grader_model: str = "llama-3.1-8b-instant"
+    # verifying an answer needs a stronger model than the 8b used for grading
+    grounding_model: str = "llama-3.3-70b-versatile"
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
 
     chroma_dir: Path = ROOT_DIR / "chroma_db"
@@ -24,6 +26,9 @@ class Settings(BaseSettings):
     max_retries: int = 2
     chunk_size: int = 900
     chunk_overlap: int = 150
+
+    enable_hallucination_check: bool = True
+    enable_memory: bool = True
 
 
 @lru_cache
