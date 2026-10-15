@@ -3,6 +3,7 @@ from collections import defaultdict
 from functools import lru_cache
 
 from langchain_chroma import Chroma
+from langchain_core.documents import Document
 from langchain_huggingface import HuggingFaceEmbeddings
 
 from app.config import get_settings
@@ -35,6 +36,12 @@ def _chunk_id(source: str, index: int) -> str:
     return f"{source}::{index}"
 
 
+def _embedding_text(chunk: Document) -> str:
+    """Prefix the header path so a chunk's section name helps it match queries."""
+    header_path = chunk.metadata.get("header_path", "")
+    return f"{header_path}\n{chunk.page_content}" if header_path else chunk.page_content
+
+
 def _delete_source(source: str) -> None:
     store = get_vectorstore()
     old_ids = store.get(where={"source": source})["ids"]
@@ -54,7 +61,16 @@ def ingest_documents(docs: list[LoadedDocument]) -> dict[str, int]:
         # drop old chunks first: a shorter re-upload would otherwise leave stale ones
         _delete_source(doc.source)
         ids = [_chunk_id(doc.source, c.metadata["chunk_index"]) for c in chunks]
-        store.add_documents(chunks, ids=ids)
+        # the wrapper embeds page_content, but we want to embed a different text than we
+        # store, so go through the collection directly
+        store._collection.upsert(
+            ids=ids,
+            documents=[c.page_content for c in chunks],
+            embeddings=get_embeddings().embed_documents(
+                [_embedding_text(c) for c in chunks]
+            ),
+            metadatas=[c.metadata for c in chunks],
+        )
         counts[doc.source] = len(chunks)
         logger.info("indexed %s (%d chunks)", doc.source, len(chunks))
     return counts
