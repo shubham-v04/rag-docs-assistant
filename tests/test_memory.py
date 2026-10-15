@@ -2,6 +2,7 @@ import pytest
 
 from app.graph.builder import build_graph
 from app.graph.nodes import QueryAnalysis
+from app.graph.state import initial_state
 from app.services.feedback import FeedbackStore
 from app.services.memory import ConversationMemory
 from app.services.query import answer_question
@@ -9,7 +10,8 @@ from tests.fakes import FakeRetriever, make_deps, make_doc
 
 FIRST = "How do I declare a query parameter?"
 FOLLOW_UP = "What about optional ones?"
-STANDALONE = "how to declare an optional query parameter"
+STANDALONE_QUESTION = "How do I declare an optional query parameter?"
+SEARCH_QUERY = "declare optional query parameter default None"
 FIRST_ANSWER = "Declare it as a function argument. [source: query-params.md]"
 
 DOC = make_doc(
@@ -61,31 +63,38 @@ def test_sessions_are_separate_and_get_returns_a_copy():
 
 
 class Conversation:
-    """A graph with fake chains that records what the analyzer and grader receive."""
+    """A graph with fake chains that records what each LLM step receives."""
 
     def __init__(self, tmp_path, monkeypatch):
         monkeypatch.setattr("app.services.query.chunk_count", lambda: 1)
         self.store = FeedbackStore(tmp_path / "fb.sqlite3")
         self.analyzer_inputs: list[dict] = []
         self.grader_inputs: list[dict] = []
+        self.generator_inputs: list[dict] = []
         self.retriever = FakeRetriever(lambda query: [DOC])
 
         def analyze(variables):
             self.analyzer_inputs.append(variables)
-            # a real model would resolve "optional ones" from the history
+            # a real model resolves "optional ones" from the history. It also rewords
+            # the question on the first turn, which the graph must ignore.
             has_history = variables["history"] != "(none)"
-            query = STANDALONE if has_history else variables["question"]
-            return QueryAnalysis(search_query=query, query_type="how-to")
+            query = SEARCH_QUERY if has_history else variables["question"]
+            return QueryAnalysis(
+                standalone_question=STANDALONE_QUESTION,
+                search_query=query,
+                query_type="how-to",
+            )
 
         def grade(variables):
             self.grader_inputs.append(variables)
             return True
 
+        def generate(variables):
+            self.generator_inputs.append(variables)
+            return FIRST_ANSWER
+
         deps = make_deps(
-            self.retriever,
-            grade=grade,
-            analyze=analyze,
-            generate=lambda v: FIRST_ANSWER,
+            self.retriever, grade=grade, analyze=analyze, generate=generate
         )
         self.graph = build_graph(deps, enable_grounding_check=False)
 
@@ -108,21 +117,67 @@ def test_follow_up_is_rewritten_using_the_first_turn(conversation):
     assert FIRST in second_call["history"]
     assert FIRST_ANSWER in second_call["history"]
     assert second_call["question"] == FOLLOW_UP
-    # retrieval used the standalone rewrite, not the vague follow-up
-    assert conversation.retriever.queries == [FIRST, STANDALONE]
+    # retrieval used the rewrite, not the vague follow-up
+    assert conversation.retriever.queries == [FIRST, SEARCH_QUERY]
 
 
-def test_history_never_reaches_grading(conversation):
+def test_grading_and_generation_get_the_standalone_question_not_the_history(
+    conversation,
+):
     memory = ConversationMemory()
     conversation.ask(FIRST, memory, "s1")
     conversation.ask(FOLLOW_UP, memory, "s1")
 
-    second_turn_grades = conversation.grader_inputs[1:]
-    assert second_turn_grades
-    for variables in second_turn_grades:
+    # the second turn is the follow-up
+    grading = conversation.grader_inputs[1:]
+    generation = conversation.generator_inputs[1:]
+    assert grading
+    assert generation
+
+    for variables in grading:
         assert set(variables) == {"question", "context"}
-        assert variables["question"] == FOLLOW_UP
-        assert FIRST not in variables["context"]
+        assert variables["question"] == STANDALONE_QUESTION
+    for variables in generation:
+        assert set(variables) == {"question", "context", "extra_instructions"}
+        assert variables["question"] == STANDALONE_QUESTION
+    # nothing from the first turn leaks into either step
+    for variables in grading + generation:
+        assert FIRST not in "".join(variables.values())
+        assert FIRST_ANSWER not in "".join(variables.values())
+
+
+def test_without_history_grading_and_generation_use_the_users_own_wording(conversation):
+    conversation.ask(FIRST, ConversationMemory(), "s1")
+
+    assert conversation.grader_inputs[0]["question"] == FIRST
+    assert conversation.generator_inputs[0]["question"] == FIRST
+
+
+def test_the_original_question_stays_in_state(conversation):
+    history = [{"question": FIRST, "answer": FIRST_ANSWER}]
+    final = conversation.graph.invoke(initial_state(FOLLOW_UP, 2, history))
+
+    assert final["question"] == FOLLOW_UP
+    assert final["standalone_question"] == STANDALONE_QUESTION
+
+
+def test_failed_analysis_falls_back_to_the_original_question():
+    grader_inputs = []
+
+    def broken_analyzer(variables):
+        raise RuntimeError("llm unavailable")
+
+    retriever = FakeRetriever(lambda query: [DOC])
+    deps = make_deps(
+        retriever,
+        grade=lambda v: grader_inputs.append(v) or True,
+        analyze=broken_analyzer,
+    )
+    history = [{"question": FIRST, "answer": FIRST_ANSWER}]
+    graph = build_graph(deps, enable_grounding_check=False)
+    graph.invoke(initial_state(FOLLOW_UP, 0, history))
+
+    assert grader_inputs[0]["question"] == FOLLOW_UP
 
 
 def test_two_sessions_never_see_each_others_history(conversation):

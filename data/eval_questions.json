@@ -1,0 +1,49 @@
+[
+  {
+    "question": "How do I declare an optional query parameter with a default value?",
+    "expect": "answer",
+    "expected_source": "query-params.md"
+  },
+  {
+    "question": "How do I make a query parameter required?",
+    "expect": "answer",
+    "expected_source": "query-params.md"
+  },
+  {
+    "question": "How do I start the FastAPI development server?",
+    "expect": "answer",
+    "expected_source": "first-steps.md"
+  },
+  {
+    "question": "What is a path operation decorator?",
+    "expect": "answer",
+    "expected_source": "first-steps.md"
+  },
+  {
+    "question": "How can I restrict a path parameter to a fixed set of valid values?",
+    "expect": "answer",
+    "expected_source": "path-params.md"
+  },
+  {
+    "question": "How do I declare a JSON request body using a Pydantic model?",
+    "expect": "answer",
+    "expected_source": "request-body.md"
+  },
+  {
+    "question": "What is dependency injection in FastAPI?",
+    "expect": "answer",
+    "expected_source": "dependencies.md"
+  },
+  {
+    "question": "How do I train a convolutional neural network in PyTorch?",
+    "expect": "no_answer"
+  },
+  {
+    "question": "How do I set up a Kubernetes ingress with TLS certificates?",
+    "expect": "no_answer"
+  },
+  {
+    "question": "What is the capital of Australia?",
+    "expect": "no_answer"
+  }
+]

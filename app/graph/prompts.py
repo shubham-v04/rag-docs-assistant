@@ -6,16 +6,17 @@ ANALYZE_PROMPT = ChatPromptTemplate.from_messages(
             "system",
             (
                 "You prepare questions for a search over the FastAPI tutorial documentation.\n"
-                "1. search_query: rewrite the question as a standalone, keyword-rich search query. "
+                "The conversation so far is shown before the question; it may be empty.\n"
+                "1. standalone_question: the question rewritten so it makes sense on its own. "
+                'If it depends on the conversation ("it", "that", "what about ..."), fill in '
+                "what it refers to. If it already stands alone, repeat it unchanged.\n"
+                "2. search_query: a keyword-rich search query for the standalone question. "
                 "Clarify ambiguity and add likely synonyms or FastAPI terms. Do not answer it.\n"
-                "2. query_type, one of:\n"
+                "3. query_type, one of:\n"
                 "- conceptual: what something is or why it works that way\n"
                 "- how-to: steps to achieve something\n"
                 "- troubleshooting: an error or unexpected behaviour\n"
-                "- api-reference: the parameters, options or signature of a specific function or class\n"
-                "The conversation so far is shown before the question. If the question depends on "
-                'it ("it", "that", "what about ..."), write search_query so it makes sense on '
-                "its own. Otherwise ignore the conversation."
+                "- api-reference: the parameters, options or signature of a specific function or class"
             ),
         ),
         ("human", "Conversation so far:\n{history}\n\nQuestion: {question}"),

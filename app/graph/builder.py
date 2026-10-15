@@ -150,6 +150,7 @@ def run_graph(
         "query_type": final["query_type"],
         "retry_count": final["retry_count"],
         "trace": final["trace"],
+        "standalone_question": final["standalone_question"],
         "search_query": final["search_query"],
         "no_answer": final["no_answer"],
         "grounded": final["grounded"],

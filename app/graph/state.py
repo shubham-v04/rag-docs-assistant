@@ -23,6 +23,10 @@ class GraphState(TypedDict):
     Who writes what:
       question            - set once by run_graph, never overwritten (grading and
                             generation always judge against the user's own words)
+      standalone_question - analyze_query: the question rewritten so it makes sense without
+                            the conversation. Equal to question when there is no history.
+                            grade_documents, generate and rewrite_query use it, so they
+                            never need the history itself
       search_query        - analyze_query sets it, rewrite_query replaces it on a retry
       query_type          - analyze_query
       documents           - retrieve (replaced on every retrieval, scores in metadata)
@@ -47,6 +51,7 @@ class GraphState(TypedDict):
     """
 
     question: str
+    standalone_question: str
     search_query: str
     query_type: QueryType | None
     documents: list[Document]
@@ -68,6 +73,7 @@ def initial_state(
 ) -> GraphState:
     return GraphState(
         question=question,
+        standalone_question=question,
         search_query=question,
         query_type=None,
         documents=[],

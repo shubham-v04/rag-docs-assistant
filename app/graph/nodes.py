@@ -27,6 +27,9 @@ GENERATION_ERROR_MESSAGE = "I found relevant documentation but could not generat
 
 
 class QueryAnalysis(BaseModel):
+    standalone_question: str = Field(
+        description="The question rewritten to make sense without the conversation"
+    )
     search_query: str = Field(
         description="Standalone search query for the documentation"
     )
@@ -76,19 +79,24 @@ class GraphDeps:
 
 def analyze_query(state: GraphState, deps: GraphDeps) -> dict:
     question = state["question"]
+    history = state["history"]
     try:
         result = deps.analyzer.invoke(
-            {"question": question, "history": format_history(state["history"])}
+            {"question": question, "history": format_history(history)}
         )
         search_query = result.search_query.strip() or question
         query_type = result.query_type
+        # without history there is nothing to resolve, so keep the user's own wording
+        standalone = result.standalone_question.strip() if history else ""
+        standalone = standalone or question
     except Exception:
         # search with the raw question rather than failing the whole request
         logger.warning(
             "query analysis failed, using the original question", exc_info=True
         )
-        search_query, query_type = question, DEFAULT_QUERY_TYPE
+        search_query, query_type, standalone = question, DEFAULT_QUERY_TYPE, question
     return {
+        "standalone_question": standalone,
         "search_query": search_query,
         "query_type": query_type,
         "trace": ["analyze_query"],
@@ -110,7 +118,7 @@ def retrieve(state: GraphState, deps: GraphDeps) -> dict:
 def grade_documents(state: GraphState, deps: GraphDeps) -> dict:
     documents = state["documents"]
     inputs = [
-        {"question": state["question"], "context": format_chunk(doc)}
+        {"question": state["standalone_question"], "context": format_chunk(doc)}
         for doc in documents
     ]
     grades = deps.grader.batch(
@@ -135,7 +143,7 @@ def rewrite_query(state: GraphState, deps: GraphDeps) -> dict:
     failed = state["search_query"]
     try:
         result = deps.rewriter.invoke(
-            {"question": state["question"], "failed_query": failed}
+            {"question": state["standalone_question"], "failed_query": failed}
         )
         new_query = result.search_query.strip() or failed
     except Exception:
@@ -162,7 +170,7 @@ def generate(state: GraphState, deps: GraphDeps) -> dict:
     try:
         answer = deps.generator.invoke(
             {
-                "question": state["question"],
+                "question": state["standalone_question"],
                 "context": context,
                 "extra_instructions": extra,
             }

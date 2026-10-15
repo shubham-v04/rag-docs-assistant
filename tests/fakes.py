@@ -54,7 +54,9 @@ def make_deps(
             analyze
             or (
                 lambda v: QueryAnalysis(
-                    search_query="expanded query", query_type="how-to"
+                    standalone_question=v["question"],
+                    search_query="expanded query",
+                    query_type="how-to",
                 )
             )
         ),

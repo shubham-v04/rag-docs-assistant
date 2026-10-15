@@ -25,6 +25,8 @@ def main() -> None:
 
     print(f"trace:        {' -> '.join(result['trace'])}")
     print(f"query type:   {result['query_type']}")
+    if result["standalone_question"] != args.question:
+        print(f"standalone:   {result['standalone_question']}")
     print(f"final query:  {result['search_query']}")
     print(f"retries:      {result['retry_count']}")
     print(f"\n{result['answer']}\n")

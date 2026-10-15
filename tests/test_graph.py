@@ -15,7 +15,9 @@ DEFAULTS_B = make_doc(
 BODY = make_doc("request-body.md", "Request Body", "declare a pydantic model", 2)
 
 ANALYZE_EXPANDED = QueryAnalysis(
-    search_query="optional query parameter default None", query_type="how-to"
+    standalone_question=QUESTION,
+    search_query="optional query parameter default None",
+    query_type="how-to",
 )
 
 
@@ -77,7 +79,9 @@ def test_retries_until_limit_then_gives_up():
         retriever,
         grade=lambda v: False,
         analyze=lambda v: QueryAnalysis(
-            search_query="first try", query_type="conceptual"
+            standalone_question=v["question"],
+            search_query="first try",
+            query_type="conceptual",
         ),
         rewrite=lambda v: RewrittenQuery(search_query=next(rewrites)),
         generate=lambda v: generated.append(v) or "should not run",
