@@ -1,0 +1,272 @@
+{
+  "run_at": "2026-10-16T04:42:43+00:00",
+  "complete": true,
+  "summary": {
+    "total": 10,
+    "routing_correct": 10,
+    "answerable": 7,
+    "source_found": 7,
+    "errors": 0,
+    "average_latency_seconds": 42.82
+  },
+  "results": [
+    {
+      "question": "How do I declare an optional query parameter with a default value?",
+      "expect": "answer",
+      "actual": "answer",
+      "correct": true,
+      "retries": 0,
+      "sources": [
+        "query-params.md",
+        "request-body.md"
+      ],
+      "expected_source": "query-params.md",
+      "source_found": true,
+      "latency_seconds": 8.51,
+      "query_type": "how-to",
+      "grounded": true,
+      "trace": [
+        "analyze_query",
+        "retrieve",
+        "grade_documents",
+        "generate",
+        "check_grounding"
+      ],
+      "answer": "To make a query parameter optional you give it a default value in the function signature.  \nFastAPI treats any parameter that has a default value as **not required**.\n\n```python\nfrom fastapi import FastAPI\n\napp = FastAPI()\n\n@app.get(\"/items/{item_id}\")\nasync def read_item(item_id: str, q: str | None = None):\n    if q:\n        return {\"item_id\": item_id, \"q\": q}\n    return {\"item_id\": item_id}\n```\n\nIn this example the query parameter `q` is optional and defaults to `None` if it is not supplied in the URL.  \nYou can also give it any other default value, e.g. `q: str = \"default\"` \u2013 the presence of a default makes the parameter optional.  \n\n> *FastAPI will know that the value of `q` is not required because of the default value `= None`.*  \n> *The `str | None` is not used by FastAPI to determine that the value is not required, it will know it's not required because it has a default value of `= None`.*  \n> [source: query-params.md]",
+      "error": null
+    },
+    {
+      "question": "How do I make a query parameter required?",
+      "expect": "answer",
+      "actual": "answer",
+      "correct": true,
+      "retries": 0,
+      "sources": [
+        "query-params.md",
+        "request-body.md"
+      ],
+      "expected_source": "query-params.md",
+      "source_found": true,
+      "latency_seconds": 24.11,
+      "query_type": "how-to",
+      "grounded": true,
+      "trace": [
+        "analyze_query",
+        "retrieve",
+        "grade_documents",
+        "generate",
+        "check_grounding"
+      ],
+      "answer": "To make a query parameter required in FastAPI you simply **don\u2019t give it a default value**.  \nWhen a function parameter is a singular type (`int`, `float`, `str`, `bool`, \u2026) and has no default, FastAPI treats it as a required query parameter.\n\n```python\nfrom fastapi import FastAPI\n\napp = FastAPI()\n\n@app.get(\"/items/{item_id}\")\nasync def read_user_item(item_id: str, needy: str):\n    item = {\"item_id\": item_id, \"needy\": needy}\n    return item\n```\n\nIn this example the query parameter `needy` is required.  \nIf you call the endpoint without it, e.g.:\n\n```\nhttp://127.0.0.1:8000/items/foo-item\n```\n\nFastAPI returns an error like:\n\n```JSON\n{\n  \"detail\": [\n    {\n      \"type\": \"missing\",\n      \"loc\": [\n        \"query\",\n        \"needy\"\n      ],\n      \"msg\": \"Field required\",\n      \"input\": null\n    }\n  ]\n}\n```\n\nTo satisfy the requirement you must include it in the URL:\n\n```\nhttp://127.0.0.1:8000/items/foo-item?needy=sooooneedy\n```\n\nwhich returns:\n\n```JSON\n{\n    \"item_id\": \"foo-item\",\n    \"needy\": \"sooooneedy\"\n}\n```\n\nIf you want a parameter to be optional, give it a default value (e.g., `None` or any other value).  \nYou can mix required, optional, and defaulted parameters in the same endpoint, as shown in the last code snippet in the documentation.",
+      "error": null
+    },
+    {
+      "question": "How do I start the FastAPI development server?",
+      "expect": "answer",
+      "actual": "answer",
+      "correct": true,
+      "retries": 0,
+      "sources": [
+        "first-steps.md"
+      ],
+      "expected_source": "first-steps.md",
+      "source_found": true,
+      "latency_seconds": 37.1,
+      "query_type": "how-to",
+      "grounded": true,
+      "trace": [
+        "analyze_query",
+        "retrieve",
+        "grade_documents",
+        "generate",
+        "check_grounding",
+        "generate",
+        "check_grounding"
+      ],
+      "answer": "To start the FastAPI development server you run the **`fastapi dev`** command.\n\n* If you want the tool to discover the app automatically, just execute:\n\n```bash\n$ fastapi dev\n```\n\n* If you need to specify the file or the exact app object, you can pass a path or use the `--entrypoint` option:\n\n```bash\n# Using a file path\n$ uv run fastapi dev main.py\n\n# Using an explicit entrypoint\n$ uv run fastapi dev --entrypoint main:app\n```\n\nThe `--entrypoint` option is useful when the app cannot be found automatically, and it is recommended to set it in `pyproject.toml` so that other tools (e.g., VS\u202fCode Extension, FastAPI Cloud) can locate it.  \n\nThese instructions are taken from the \u201cFirst Steps\u201d section of the documentation.",
+      "error": null
+    },
+    {
+      "question": "What is a path operation decorator?",
+      "expect": "answer",
+      "actual": "answer",
+      "correct": true,
+      "retries": 0,
+      "sources": [
+        "dependencies.md",
+        "first-steps.md"
+      ],
+      "expected_source": "first-steps.md",
+      "source_found": true,
+      "latency_seconds": 58.18,
+      "query_type": "conceptual",
+      "grounded": true,
+      "trace": [
+        "analyze_query",
+        "retrieve",
+        "grade_documents",
+        "generate",
+        "check_grounding",
+        "generate",
+        "check_grounding"
+      ],
+      "answer": "A **path operation decorator** is the `@app.<method>(<path>)` syntax that you put on top of a function to tell FastAPI which HTTP method and URL path the function should handle.  \nFor example, `@app.get(\"/\")` tells FastAPI that the function immediately below it should handle GET requests to the path `/`\u202f\u2013\u202fthis is the \u201cpath operation decorator\u201d\u202f[source: first\u2011steps.md | First Steps > Recap, step by step > Step\u202f3: create a *path operation*].  \n\nTypical decorators include:\n\n* `@app.get()`\n* `@app.post()`\n* `@app.put()`\n* `@app.delete()`\n* `@app.options()`\n* `@app.head()`\n* `@app.patch()`\n* `@app.trace()`\u202f[source: first\u2011steps.md | First Steps > Recap, step by step > Step\u202f3: create a *path operation*].\n\nThe decorator associates the function with the specified HTTP method and path, enabling FastAPI to route incoming requests accordingly.",
+      "error": null
+    },
+    {
+      "question": "How can I restrict a path parameter to a fixed set of valid values?",
+      "expect": "answer",
+      "actual": "answer",
+      "correct": true,
+      "retries": 0,
+      "sources": [
+        "path-params.md"
+      ],
+      "expected_source": "path-params.md",
+      "source_found": true,
+      "latency_seconds": 63.81,
+      "query_type": "how-to",
+      "grounded": true,
+      "trace": [
+        "analyze_query",
+        "retrieve",
+        "grade_documents",
+        "generate",
+        "check_grounding",
+        "generate",
+        "check_grounding"
+      ],
+      "answer": "To limit a path parameter to a specific set of values, declare a Python `Enum` and use that enum type in the path operation signature.\n\n1. **Create an enum class** that inherits from both `str` and `Enum`.  \n   Inheriting from `str` tells FastAPI that the values are strings, which lets the API docs render the allowed values correctly.  \n   ```python\n   from enum import Enum\n   from fastapi import FastAPI\n\n   class ModelName(str, Enum):\n       alexnet = \"alexnet\"\n       resnet = \"resnet\"\n       lenet = \"lenet\"\n   ```\n   *[source: path-params.md]*\n\n2. **Use the enum type for the path parameter**.  \n   FastAPI will bind the incoming path segment to the corresponding enum member.  \n   ```python\n   app = FastAPI()\n\n   @app.get(\"/models/{model_name}\")\n   async def get_model(model_name: ModelName):\n       if model_name is ModelName.alexnet:\n           return {\"model_name\": model_name, \"message\": \"Deep Learning FTW!\"}\n\n       if model_name.value == \"lenet\":\n           return {\"model_name\": model_name, \"message\": \"LeCNN all the images\"}\n\n       return {\"model_name\": model_name, \"message\": \"Have some residuals\"}\n   ```\n   *[source: path-params.md]*\n\n3. **Compare or use the enum member** inside the function.  \n   You can compare the parameter directly with an enum member (`model_name is ModelName.alexnet`) or inspect its underlying value (`model_name.value`).  \n   *[source: path-params.md]*\n\n4. **Return enum members** if desired.  \n   When an enum member is returned (e.g., inside a JSON body), FastAPI converts it to its underlying value before sending the response.  \n   ```python\n   return {\"model_name\": model_name, \"message\": \"Have some residuals\"}\n   ```\n   *[source: path-params.md]*\n\nBy defining the enum and using it as the type for the path parameter, you restrict the accepted values to the ones you listed in the enum.",
+      "error": null
+    },
+    {
+      "question": "How do I declare a JSON request body using a Pydantic model?",
+      "expect": "answer",
+      "actual": "answer",
+      "correct": true,
+      "retries": 0,
+      "sources": [
+        "request-body.md"
+      ],
+      "expected_source": "request-body.md",
+      "source_found": true,
+      "latency_seconds": 40.3,
+      "query_type": "how-to",
+      "grounded": true,
+      "trace": [
+        "analyze_query",
+        "retrieve",
+        "grade_documents",
+        "generate",
+        "check_grounding"
+      ],
+      "answer": "To declare a JSON request body in FastAPI you:\n\n1. **Create a Pydantic model** that represents the JSON structure you expect.  \n   The model inherits from `BaseModel` and uses normal Python type hints.  \n   Fields that have a default value (or `None`) are optional; otherwise they are required.  \n\n   ```python\n   from pydantic import BaseModel\n\n   class Item(BaseModel):\n       name: str\n       description: str | None = None\n       price: float\n       tax: float | None = None\n   ```\n\n   *[source: request-body.md | Create your data model]*\n\n2. **Use the model as a function parameter** in a path operation.  \n   FastAPI automatically reads the request body as JSON and validates it against the model.  \n\n   ```python\n   from fastapi import FastAPI\n\n   app = FastAPI()\n\n   @app.post(\"/items/\")\n   async def create_item(item: Item):\n       return item\n   ```\n\n   *[source: request-body.md | Create your data model]*\n\n3. **(Optional) Combine with path or query parameters** \u2013 FastAPI distinguishes the parameter types automatically:  \n   * path parameters are taken from the URL path,  \n   * singular types (`int`, `str`, etc.) are treated as query parameters,  \n   * Pydantic model types are treated as request bodies.  \n\n   ```python\n   @app.put(\"/items/{item_id}\")\n   async def update_item(item_id: int, item: Item):\n       return {\"item_id\": item_id, **item.model_dump()}\n   ```\n\n   *[source: request-body.md | Request body + path parameters]*\n\nThe JSON payload that matches the `Item` model looks like:\n\n```JSON\n{\n    \"name\": \"Foo\",\n    \"description\": \"An optional description\",\n    \"price\": 45.2,\n    \"tax\": 3.5\n}\n```\n\n*[source: request-body.md | Create your data model]*\n\nThat\u2019s all you need to declare a JSON request body using a Pydantic model in FastAPI.",
+      "error": null
+    },
+    {
+      "question": "What is dependency injection in FastAPI?",
+      "expect": "answer",
+      "actual": "answer",
+      "correct": true,
+      "retries": 0,
+      "sources": [
+        "dependencies.md"
+      ],
+      "expected_source": "dependencies.md",
+      "source_found": true,
+      "latency_seconds": 45.05,
+      "query_type": "conceptual",
+      "grounded": true,
+      "trace": [
+        "analyze_query",
+        "retrieve",
+        "grade_documents",
+        "generate",
+        "check_grounding"
+      ],
+      "answer": "**Dependency injection in FastAPI** is a mechanism that lets your path\u2011operation functions declare the resources they need (called *dependencies*). FastAPI then automatically runs those dependencies before calling the function and \u201cinjects\u201d their results into the function\u2019s parameters.\n\n- The system is designed to be **very simple to use** and to make it easy to integrate other components with FastAPI.  \n  [source: dependencies.md]\n\n- Dependencies can be anything that your function needs: shared logic, database connections, security checks, etc.  \n  [source: dependencies.md | What is \"Dependency Injection\"]\n\n- When a request matches a path and operation, FastAPI calls the path\u2011operation function **with the correct parameters** extracted from the request.  \n  [source: dependencies.md | Simple usage]\n\n- You never call these functions directly; the framework does it for you.  \n  [source: dependencies.md | Simple usage]\n\n- By declaring a dependency, FastAPI will execute it first and then pass its return value to the path\u2011operation function.  \n  [source: dependencies.md | Simple usage]\n\n- The same idea is also referred to as **components, resources, providers, services, injectables**.  \n  [source: dependencies.md | Dependencies]\n\n- Dependencies enable you to build integrations and \u201cplug\u2011ins\u201d without creating separate plug\u2011in modules.  \n  [source: dependencies.md | **FastAPI** plug\u2011ins]\n\n- This approach lets you declare an infinite number of integrations\u2014e.g., relational or NoSQL databases, security, etc.\u2014in just a few lines of code.  \n  [source: dependencies.md | **FastAPI** plug\u2011ins]\n\nIn short, dependency injection in FastAPI is a powerful, intuitive system that lets you declare what a path operation needs, and have FastAPI automatically provide those resources, reducing code repetition and simplifying integration.",
+      "error": null
+    },
+    {
+      "question": "How do I train a convolutional neural network in PyTorch?",
+      "expect": "no_answer",
+      "actual": "no_answer",
+      "correct": true,
+      "retries": 2,
+      "sources": [],
+      "expected_source": null,
+      "source_found": null,
+      "latency_seconds": 45.16,
+      "query_type": "how-to",
+      "grounded": null,
+      "trace": [
+        "analyze_query",
+        "retrieve",
+        "grade_documents",
+        "rewrite_query",
+        "retrieve",
+        "grade_documents",
+        "rewrite_query",
+        "retrieve",
+        "grade_documents",
+        "no_answer"
+      ],
+      "answer": "I could not find this in the indexed documentation. Try rephrasing the question, or ingest documents that cover the topic.",
+      "error": null
+    },
+    {
+      "question": "How do I set up a Kubernetes ingress with TLS certificates?",
+      "expect": "no_answer",
+      "actual": "no_answer",
+      "correct": true,
+      "retries": 2,
+      "sources": [],
+      "expected_source": null,
+      "source_found": null,
+      "latency_seconds": 50.46,
+      "query_type": "how-to",
+      "grounded": null,
+      "trace": [
+        "analyze_query",
+        "retrieve",
+        "grade_documents",
+        "rewrite_query",
+        "retrieve",
+        "grade_documents",
+        "rewrite_query",
+        "retrieve",
+        "grade_documents",
+        "no_answer"
+      ],
+      "answer": "I could not find this in the indexed documentation. Try rephrasing the question, or ingest documents that cover the topic.",
+      "error": null
+    },
+    {
+      "question": "What is the capital of Australia?",
+      "expect": "no_answer",
+      "actual": "no_answer",
+      "correct": true,
+      "retries": 2,
+      "sources": [],
+      "expected_source": null,
+      "source_found": null,
+      "latency_seconds": 55.48,
+      "query_type": "conceptual",
+      "grounded": null,
+      "trace": [
+        "analyze_query",
+        "retrieve",
+        "grade_documents",
+        "rewrite_query",
+        "retrieve",
+        "grade_documents",
+        "rewrite_query",
+        "retrieve",
+        "grade_documents",
+        "no_answer"
+      ],
+      "answer": "I could not find this in the indexed documentation. Try rephrasing the question, or ingest documents that cover the topic.",
+      "error": null
+    }
+  ]
+}
