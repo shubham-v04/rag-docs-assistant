@@ -78,7 +78,7 @@ def run_question(item: dict, run: Callable[..., dict]) -> dict:
     start = time.perf_counter()
     try:
         output = run(item["question"])
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         # one bad question should not lose the rest of the run
         return score_result(
             item, None, time.perf_counter() - start, f"{type(exc).__name__}: {exc}"

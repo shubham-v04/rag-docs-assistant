@@ -47,9 +47,7 @@ def use_settings(monkeypatch, chunk_size: int, chunk_overlap: int = 40):
 
 
 def doc(text: str, source: str = "sample.md") -> LoadedDocument:
-    return LoadedDocument(
-        text=text, source=source, title="Query Parameters", is_markdown=True
-    )
+    return LoadedDocument(text=text, source=source, title="Query Parameters")
 
 
 @pytest.mark.parametrize("chunk_size", [300, 500, 900])

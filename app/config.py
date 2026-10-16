@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     grader_model: str = "openai/gpt-oss-20b"
     grounding_model: str = "openai/gpt-oss-20b"
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    # optional; only silences the Hugging Face "unauthenticated requests" notice and
+    # raises download rate limits. The model is public, so it is not required.
+    hf_token: str = ""
 
     chroma_dir: Path = ROOT_DIR / "chroma_db"
     collection_name: str = "docs"

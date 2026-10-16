@@ -51,9 +51,7 @@ def make_document(source: str, sections: int, title: str = "Guide") -> LoadedDoc
         f"## Section {i}\n\n" + " ".join(f"{source} fact {i}.{j}." for j in range(12))
         for i in range(sections)
     )
-    return LoadedDocument(
-        text=f"# {title}\n\n{body}", source=source, title=title, is_markdown=True
-    )
+    return LoadedDocument(text=f"# {title}\n\n{body}", source=source, title=title)
 
 
 def stored_ids() -> list[str]:

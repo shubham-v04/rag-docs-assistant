@@ -20,7 +20,6 @@ class LoadedDocument:
     text: str
     source: str
     title: str
-    is_markdown: bool = False
 
 
 def _decode(data: bytes) -> str:
@@ -81,9 +80,7 @@ def load_bytes(data: bytes, filename: str, source: str | None = None) -> LoadedD
     text = raw.strip()
     if suffix in {".md", ".markdown"}:
         text = strip_heading_anchors(text)
-        return LoadedDocument(
-            text, name, _markdown_title(text, fallback_title), is_markdown=True
-        )
+        return LoadedDocument(text, name, _markdown_title(text, fallback_title))
     return LoadedDocument(text, name, fallback_title)
 
 

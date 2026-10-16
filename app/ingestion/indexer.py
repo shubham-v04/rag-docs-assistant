@@ -1,4 +1,5 @@
 import logging
+import os
 from collections import defaultdict
 from functools import lru_cache
 
@@ -13,10 +14,23 @@ from app.ingestion.loader import LoadedDocument
 logger = logging.getLogger(__name__)
 
 
+class _DropHubNotice(logging.Filter):
+    """The embedding model is public, so the "unauthenticated requests" advice is noise."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "unauthenticated requests" not in record.getMessage()
+
+
 @lru_cache
 def get_embeddings() -> HuggingFaceEmbeddings:
+    settings = get_settings()
+    if settings.hf_token:
+        # huggingface_hub reads the token from the environment, not from our .env
+        os.environ.setdefault("HF_TOKEN", settings.hf_token)
+    else:
+        logging.getLogger("huggingface_hub.utils._http").addFilter(_DropHubNotice())
     return HuggingFaceEmbeddings(
-        model_name=get_settings().embedding_model,
+        model_name=settings.embedding_model,
         encode_kwargs={"normalize_embeddings": True},
     )
 

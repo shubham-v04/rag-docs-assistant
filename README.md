@@ -67,12 +67,12 @@ scripts/ (fetch_corpus, ingest, ask, evaluate)   ui.py   data/corpus/   data/eva
 
 ## Setup
 
-I developed on Python 3.11 and have not tried other versions.
+The pinned versions come from a Python 3.13 environment. The code needs 3.11 or newer (it uses `datetime.UTC`); I have run it only on 3.13.
 
 Linux / macOS:
 
 ```
-python3.11 -m venv venv
+python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
@@ -81,11 +81,13 @@ cp .env.example .env
 Windows (PowerShell):
 
 ```
-py -3.11 -m venv venv
+py -3 -m venv venv
 venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 copy .env.example .env
 ```
+
+For running the tests and lint, install `requirements-dev.txt` instead (it includes `requirements.txt`). Direct dependencies are pinned to the versions I tested with; transitive ones are left to pip.
 
 Put your key in `.env` as `GROQ_API_KEY=...`, or export it in the shell. Environment variables win over `.env`. Run everything from the repository root: relative paths such as `CHROMA_DIR` are resolved from the directory you start the process in.
 
@@ -96,6 +98,7 @@ Put your key in `.env` as `GROQ_API_KEY=...`, or export it in the shell. Environ
 | `GRADER_MODEL` | `openai/gpt-oss-20b` | Query analysis, chunk grading and query rewriting. |
 | `GROUNDING_MODEL` | `openai/gpt-oss-20b` | Checks the answer against the chunks. |
 | `EMBEDDING_MODEL` | `sentence-transformers/all-MiniLM-L6-v2` | Local embedding model. |
+| `HF_TOKEN` | empty | Optional Hugging Face token. The model is public, so it is not needed; it only raises download limits. |
 | `CHROMA_DIR` | `chroma_db` | Where Chroma persists the index. |
 | `FEEDBACK_DB` | `data/feedback.sqlite3` | SQLite file for queries and feedback. |
 | `TOP_K` | `5` | Chunks retrieved per attempt. |
@@ -150,6 +153,27 @@ python scripts/ask.py "How do I declare an optional query parameter with a defau
 
 It prints the node trace, query type, final search query, retry count, the answer and the sources.
 
+A real run (captured 2026-10-16, `openai/gpt-oss-20b`). The trace shows `check_grounding` rejecting the first draft, one regeneration, and the second draft passing:
+
+```
+trace:        analyze_query -> retrieve -> grade_documents -> generate -> check_grounding -> generate -> check_grounding
+query type:   how-to
+final query:  FastAPI optional query parameter default value
+retries:      0
+
+To make a query parameter optional you give it a default value. The most common way is to set the default to `None`, which tells FastAPI that the parameter is not required:
+
+    @app.get("/items/{item_id}")
+    async def read_item(item_id: str, q: str | None = None): ...
+
+In this example the function parameter `q` is a query parameter that is optional and will be `None` when it is not supplied in the request [source: query-params.md | Optional parameters].
+...
+sources:
+  - query-params.md | Query Parameters > Required query parameters
+  - query-params.md | Query Parameters > Optional parameters
+  - request-body.md | Request Body > Request body + path + query parameters
+```
+
 Tests and lint need no network and no API key. The evaluation needs a key and an ingested index:
 
 ```
@@ -171,21 +195,23 @@ curl -s -X POST localhost:8000/query -H 'Content-Type: application/json' \
 
 `question` is 3 to 1000 characters after trimming. `session_id` is optional (1 to 64 characters from letters, digits, `_`, `.` and `-`); reuse it to ask follow-ups. Without one, or with `ENABLE_MEMORY=false`, every question stands alone and `session_id` comes back null.
 
-Response shape (this is the structure, not a captured answer):
+Response from a live run (captured 2026-10-16, `openai/gpt-oss-20b`; the JSON is shown on several lines for reading, the server returns it on one):
 
 ```
 {
-  "query_id": "<32-character hex id>",
-  "answer": "<text with inline [source: file.md] citations>",
-  "sources": [{"source": "<file name or URL>", "title": "<document title>", "header_path": "<H1 > H2 > H3>"}],
-  "query_type": "<conceptual | how-to | troubleshooting | api-reference>",
-  "retries": <number of query rewrites, integer>,
-  "no_answer": <true | false>,
+  "query_id": "1dc987d975b84434a1edade956f6f30e",
+  "answer": "To make a query parameter optional you give it a **default value** in the function signature.\nFastAPI sees that the parameter has a default and therefore does not require it in the request URL.\n\n```python\nfrom fastapi import FastAPI\n\napp = FastAPI()\n\n# q is an optional query parameter; it defaults to None\n@app.get(\"/items/{item_id}\")\nasync def read_item(item_id: str, q: str | None = None):\n    if q:\n        return {\"item_id\": item_id, \"q\": q}\n    return {\"item_id\": item_id}\n```\n\n> \"When you declare a default value for non-path parameters ... then it is not required.\"\n> [source: query-params.md | Query Parameters > Required query parameters]\n\n... (answer shortened here)",
+  "sources": [
+    {"source": "query-params.md", "title": "Query Parameters", "header_path": "Query Parameters > Required query parameters"},
+    {"source": "query-params.md", "title": "Query Parameters", "header_path": "Query Parameters > Optional parameters"},
+    {"source": "request-body.md", "title": "Request Body", "header_path": "Request Body > Request body + path + query parameters"}
+  ],
+  "query_type": "how-to",
+  "retries": 0,
+  "no_answer": false,
   "session_id": "demo-session"
 }
 ```
-
-<!-- TODO: replace with a real response from a live run -->
 
 `no_answer` is true when nothing relevant was found or when the answer could not be verified. In both cases `sources` is empty.
 
@@ -293,7 +319,22 @@ The set has 10 questions. Seven are answerable from the corpus, each with the fi
 
 ### Results
 
-<!-- TODO: paste the table from a live run of scripts/evaluate.py -->
+Run of 2026-10-16 with `openai/gpt-oss-20b` for every step (full records in `eval_results.json`): **correct routing 10/10, expected source found 7/7, 0 errors, average latency 42.8 s** (the 5 s pause between questions is not counted).
+
+| # | Question | Expected | Actual | Retries | Sources | Latency |
+|---|---|---|---|---|---|---|
+| 1 | Optional query parameter with a default value | answer | answer | 0 | query-params.md, request-body.md | 8.5s |
+| 2 | Make a query parameter required | answer | answer | 0 | query-params.md, request-body.md | 24.1s |
+| 3 | Start the FastAPI development server | answer | answer | 0 | first-steps.md | 37.1s |
+| 4 | What is a path operation decorator | answer | answer | 0 | dependencies.md, first-steps.md | 58.2s |
+| 5 | Restrict a path parameter to fixed values | answer | answer | 0 | path-params.md | 63.8s |
+| 6 | JSON request body with a Pydantic model | answer | answer | 0 | request-body.md | 40.3s |
+| 7 | What is dependency injection in FastAPI | answer | answer | 0 | dependencies.md | 45.1s |
+| 8 | Train a CNN in PyTorch | no_answer | no_answer | 2 | - | 45.2s |
+| 9 | Kubernetes ingress with TLS | no_answer | no_answer | 2 | - | 50.5s |
+| 10 | Capital of Australia | no_answer | no_answer | 2 | - | 55.5s |
+
+Latency is dominated by free-tier rate-limit waits, not compute. The three out-of-scope questions each used both retries before giving up, as designed.
 
 ## Assumptions, limitations and next steps
 

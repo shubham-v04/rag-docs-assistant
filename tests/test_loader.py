@@ -13,7 +13,6 @@ def test_markdown_title_comes_from_the_first_h1():
 
     assert doc.title == "The Title"
     assert doc.source == "page.md"
-    assert doc.is_markdown is True
 
 
 def test_title_falls_back_to_the_file_name():
