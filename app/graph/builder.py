@@ -5,7 +5,7 @@ from langchain_core.output_parsers import StrOutputParser
 from langgraph.graph import END, START, StateGraph
 
 from app.config import get_settings
-from app.graph.llm import get_llm
+from app.graph.llm import get_llm, get_structured_llm
 from app.graph.nodes import (
     MAX_REGENERATIONS,
     ChunkGrade,
@@ -30,6 +30,7 @@ from app.graph.prompts import (
     GROUNDING_PROMPT,
     REWRITE_PROMPT,
 )
+from app.graph.retry import retrying
 from app.graph.state import GraphState, Turn, initial_state
 
 
@@ -108,23 +109,34 @@ def default_deps() -> GraphDeps:
     from app.ingestion.indexer import get_vectorstore
 
     settings = get_settings()
-    fast_llm = get_llm(settings.grader_model)
-    answer_llm = get_llm(settings.generation_model)
 
     def retriever(query: str, k: int):
         results = get_vectorstore().similarity_search_with_score(query, k=k)
         # chroma returns cosine distance; flip it so a higher score means closer
         return [(doc, 1 - distance) for doc, distance in results]
 
+    # every LLM call goes through retrying(), so a 429 is waited out, not treated as a result
     return GraphDeps(
-        analyzer=ANALYZE_PROMPT | fast_llm.with_structured_output(QueryAnalysis),
-        grader=GRADE_PROMPT | fast_llm.with_structured_output(ChunkGrade),
-        rewriter=REWRITE_PROMPT | fast_llm.with_structured_output(RewrittenQuery),
-        generator=GENERATE_PROMPT | answer_llm | StrOutputParser(),
+        analyzer=retrying(
+            ANALYZE_PROMPT | get_structured_llm(settings.grader_model, QueryAnalysis)
+        ),
+        grader=retrying(
+            GRADE_PROMPT | get_structured_llm(settings.grader_model, ChunkGrade)
+        ),
+        rewriter=retrying(
+            REWRITE_PROMPT | get_structured_llm(settings.grader_model, RewrittenQuery)
+        ),
+        generator=retrying(
+            GENERATE_PROMPT | get_llm(settings.generation_model) | StrOutputParser()
+        ),
         retriever=retriever,
         top_k=settings.top_k,
-        grounding_checker=GROUNDING_PROMPT
-        | get_llm(settings.grounding_model).with_structured_output(GroundingResult),
+        grounding_checker=retrying(
+            GROUNDING_PROMPT
+            | get_structured_llm(settings.grounding_model, GroundingResult)
+        ),
+        grading_concurrency=settings.grading_concurrency,
+        grading_chunk_chars=settings.grading_chunk_chars,
     )
 
 

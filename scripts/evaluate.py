@@ -1,10 +1,13 @@
 """Run the evaluation questions through the graph and report how it did.
 
-Needs GROQ_API_KEY and an ingested index. Results go to eval_results.json.
+Needs GROQ_API_KEY and an ingested index. Results go to eval_results.json, which is
+rewritten after every question so an interrupted run keeps what it has. It waits between
+questions (--pause, or EVAL_PAUSE; default 5 seconds) to stay under per-minute rate limits.
 """
 
 import argparse
 import json
+import os
 import sys
 import time
 from collections.abc import Callable
@@ -162,40 +165,75 @@ def require_ready() -> None:
         sys.exit("The index is empty. Run python scripts/ingest.py first.")
 
 
-def main(argv: list[str] | None = None, run: Callable[..., dict] | None = None) -> None:
+def save_results(path: Path, results: list[dict], run_at: str, complete: bool) -> None:
+    payload = {
+        "run_at": run_at,
+        "complete": complete,
+        "summary": summarize(results),
+        "results": results,
+    }
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    # replace in one step, so stopping the script mid-write cannot corrupt the file
+    os.replace(tmp, path)
+
+
+def progress_line(position: str, result: dict) -> str:
+    if result["error"]:
+        return f"{position} ERROR after {result['latency_seconds']:.1f}s: {result['error']}"
+    found = {True: "yes", False: "no", None: "-"}[result["source_found"]]
+    return (
+        f"{position} {result['actual']} (expected {result['expect']}), "
+        f"retries {result['retries']}, source found {found}, {result['latency_seconds']:.1f}s"
+    )
+
+
+def main(
+    argv: list[str] | None = None,
+    run: Callable[..., dict] | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--questions", type=Path, default=QUESTIONS_PATH)
     parser.add_argument("--output", type=Path, default=RESULTS_PATH)
+    parser.add_argument(
+        "--pause",
+        type=float,
+        default=None,
+        help="seconds to wait between questions (default: EVAL_PAUSE, else 5)",
+    )
     args = parser.parse_args(argv)
+    pause = max(0.0, get_settings().eval_pause if args.pause is None else args.pause)
 
     if run is None:
         require_ready()
         run = run_graph
 
     questions = load_questions(args.questions)
-    results = []
-    for i, item in enumerate(questions, start=1):
-        print(f"[{i}/{len(questions)}] {item['question']}", file=sys.stderr)
-        results.append(run_question(item, run))
-
-    summary = summarize(results)
-    args.output.write_text(
-        json.dumps(
-            {
-                "run_at": datetime.now(UTC).isoformat(timespec="seconds"),
-                "summary": summary,
-                "results": results,
-            },
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
+    run_at = datetime.now(UTC).isoformat(timespec="seconds")
+    results: list[dict] = []
+    try:
+        for i, item in enumerate(questions, start=1):
+            position = f"[{i}/{len(questions)}]"
+            if i > 1 and pause:
+                print(f"waiting {pause:g}s before the next question", file=sys.stderr)
+                sleep(pause)
+            print(f"{position} running: {item['question']}", file=sys.stderr)
+            results.append(run_question(item, run))
+            save_results(args.output, results, run_at, complete=False)
+            print(progress_line(position, results[-1]), file=sys.stderr)
+    except KeyboardInterrupt:
+        print(
+            f"\ninterrupted after {len(results)} of {len(questions)} questions",
+            file=sys.stderr,
+        )
+    save_results(args.output, results, run_at, complete=len(results) == len(questions))
 
     print(f"\n{format_table(results)}\n")
     for r in results:
         if r["error"]:
             print(f"error: {r['question']!r}: {r['error']}")
-    print(summary_line(summary))
+    print(summary_line(summarize(results)))
     print(f"results saved to {args.output}")
 
 

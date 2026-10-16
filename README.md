@@ -37,7 +37,7 @@ With `ENABLE_HALLUCINATION_CHECK=false`, `generate` goes straight to the end and
 |---|---|
 | `analyze_query` | One structured LLM call. Returns a standalone version of the question, a keyword-style search query with synonyms, and the query type (conceptual, how-to, troubleshooting, api-reference). The only node that sees conversation history. |
 | `retrieve` | Similarity search on `search_query`, top `TOP_K` chunks. The similarity score is added to each chunk's metadata. |
-| `grade_documents` | One structured LLM call per chunk, run in parallel with `.batch` (5 at a time). Keeps the chunks marked relevant. One call that fails or cannot be parsed counts as irrelevant and is logged. If every call in a round fails, the run ends with a provider error instead of looking like a miss. |
+| `grade_documents` | One structured LLM call per chunk, run with `.batch`, `GRADING_CONCURRENCY` at a time (default 2), each on a chunk shortened to `GRADING_CHUNK_CHARS` characters. Keeps the chunks marked relevant. One call that fails or cannot be parsed counts as irrelevant and is logged. If every call in a round fails, the run ends with a provider error instead of looking like a miss. |
 | `rewrite_query` | Asks for a different query, given the standalone question and the query that failed. Increments `retry_count`. |
 | `generate` | Answers only from the relevant chunks and cites them inline as `[source: file.md]`. Returns a de-duplicated source list (source, title, header path). On a regeneration it also receives the unsupported claims to avoid. If the call fails, the run ends with a provider error. |
 | `check_grounding` | Asks an LLM which claims in the answer the chunks do not support. If the call itself fails it logs a warning and lets the answer through. |
@@ -102,11 +102,17 @@ Put your key in `.env` as `GROQ_API_KEY=...`, or export it in the shell. Environ
 | `MAX_RETRIES` | `2` | Query rewrites allowed after a failed grading round. |
 | `CHUNK_SIZE` | `900` | Target chunk size in characters. |
 | `CHUNK_OVERLAP` | `150` | Overlap when a long section is split. |
+| `STRUCTURED_OUTPUT_METHOD` | `json_schema` | How structured LLM output is requested: `json_schema`, `function_calling` or `json_mode`. |
+| `GRADING_CONCURRENCY` | `2` | Grading calls in flight at once. |
+| `GRADING_CHUNK_CHARS` | `1200` | Characters of each chunk sent to the grader. Stored text and citations are not shortened. |
+| `EVAL_PAUSE` | `5` | Seconds `scripts/evaluate.py` waits between questions (also `--pause`). |
 | `ENABLE_HALLUCINATION_CHECK` | `true` | Adds `check_grounding` after `generate`. |
 | `ENABLE_MEMORY` | `true` | Keeps per-session history for follow-up questions. |
 | `API_BASE_URL` | `http://localhost:8000` | Where `ui.py` finds the API. |
 
 The model defaults are the ones I tested. Groq accounts differ in which models they may use: with my key `llama-3.1-8b-instant` and `llama-3.3-70b-versatile` came back as 404 `model_not_found`, while `openai/gpt-oss-20b` worked for every step. If your account is refused a model, set `GENERATION_MODEL`, `GRADER_MODEL` and `GROUNDING_MODEL` in `.env` or in the shell; each one is independent, so you can use a larger model for generation only.
+
+**Rate limits.** Groq's free tier has low per-minute limits (about 8,000 tokens per minute per model on the account I used), and one question makes several calls: one per retrieved chunk for grading alone. Every LLM step (analysis, grading, rewrite, generation and the grounding check) retries an HTTP 429 up to 5 times with exponential backoff and jitter, waiting as long as the `retry-after` hint says when the error carries one. Grading also runs only `GRADING_CONCURRENCY` calls at a time and sends each chunk cut to `GRADING_CHUNK_CHARS` characters; generation, the grounding check and the citations keep the full text. On a paid tier you can raise the concurrency. If a model rejects JSON-schema output, set `STRUCTURED_OUTPUT_METHOD=function_calling`.
 
 `ui.py` reads `API_BASE_URL`, `UI_HOST` (default `127.0.0.1`) and `UI_PORT` (default `7860`) from `.env` in the repository root and from the environment. A variable set in the shell wins over the file.
 
@@ -149,7 +155,7 @@ Tests and lint need no network and no API key. The evaluation needs a key and an
 ```
 pytest -q
 ruff check .
-python scripts/evaluate.py
+python scripts/evaluate.py   # takes a few minutes, see Evaluation
 ```
 
 ## API
@@ -257,11 +263,11 @@ curl -s localhost:8000/health
 
 **Chroma.** It runs in-process, persists to a directory and needs no server, which suits a take-home. It is a single-node store, and I write chunks through its underlying collection so the embedded text can differ from the stored text.
 
-**Models.** All three roles (query analysis, grading and rewriting; answer generation; the grounding check) default to `openai/gpt-oss-20b`, because that is the model that worked with my key for every step. They stay three separate settings. A small model for the many short grading calls and a larger one for the answer and the grounding check is the split I would try first, but I have not compared them. All calls use temperature 0, a 30 second timeout and the SDK's two retries.
+**Models.** All three roles (query analysis, grading and rewriting; answer generation; the grounding check) default to `openai/gpt-oss-20b`, because that is the model that worked with my key for every step. They stay three separate settings. A small model for the many short grading calls and a larger one for the answer and the grounding check is the split I would try first, but I have not compared them. All calls use temperature 0, a 30 second timeout and the SDK's two retries. Structured output uses Groq's JSON-schema mode for analysis, grading, rewrite and the grounding check. In function-calling mode `gpt-oss-20b` failed the grounding check with a 400 `tool_use_failed` error (it tried to call a tool that was not in the request), which is why `json_schema` is the default and `function_calling` stays available as a setting.
 
-**Grading cost.** Grading is one call per retrieved chunk, so a retrieval costs `TOP_K` calls. They run in parallel, so latency is roughly the slowest call, but it counts against rate limits, and with the default `MAX_RETRIES=2` a question that exhausts its retries makes `3 * TOP_K` grading calls. A single call that ranks all chunks would be cheaper, but one malformed output would then lose the whole batch. Per-chunk calls fail one chunk at a time, and a round where all of them fail is reported as a provider error.
+**Grading cost.** Grading is one call per retrieved chunk, so a retrieval costs `TOP_K` calls, and with the default `MAX_RETRIES=2` a question that exhausts its retries makes `3 * TOP_K` of them. They run `GRADING_CONCURRENCY` at a time (default 2). That keeps me under the free-tier token limit but costs latency: five chunks take about three calls' worth of time instead of one. Each chunk is cut to 1200 characters in the grading prompt only, which trims tokens while the generator still reads the whole chunk. A single call that ranks all chunks would be cheaper, but one malformed output would then lose the whole batch. Per-chunk calls fail one chunk at a time, and a round where all of them fail is reported as a provider error.
 
-**Provider errors.** A model that returns 404, a revoked key or an outage must not look like a question the docs cannot answer. If every grading call in a round fails (an exception or unparseable output for every chunk), the graph stops, retrying would only repeat the failure, and `run_graph` raises `ProviderError`. The API turns that into a 502 with a generic message, `scripts/ask.py` prints the detail, and the evaluation script records the question as an error. Failed answer generation is handled the same way. The other steps degrade quietly and log a warning: a failed analysis searches with the raw question, a failed rewrite keeps the old query, a failed grounding check lets the answer through.
+**Provider errors.** A model that returns 404, a revoked key or an outage must not look like a question the docs cannot answer. A rate-limited call is retried first (see Rate limits); it only counts as failed once the retries are used up. If every grading call in a round fails (an exception or unparseable output for every chunk), the graph stops, retrying would only repeat the failure, and `run_graph` raises `ProviderError`. The API turns that into a 502 with a generic message, `scripts/ask.py` prints the detail, and the evaluation script records the question as an error. Failed answer generation is handled the same way. The other steps degrade quietly and log a warning: a failed analysis searches with the raw question, a failed rewrite keeps the old query, a failed grounding check lets the answer through.
 
 **Retry loop.** The limit is a counter in state (`MAX_RETRIES`, default 2) that rises on every rewrite, including a failed one. LangGraph's recursion limit is set to `3 * max_retries + 15` as a second guard.
 
@@ -279,9 +285,11 @@ curl -s localhost:8000/health
 
 `scripts/evaluate.py` reads `data/eval_questions.json`, runs each question through `run_graph`, and prints one row per question: expected and actual outcome, retries, sources, whether the expected source file was among them, and latency. It writes the full records (answer, trace, query type, grounding result, any error) plus a summary to `eval_results.json`, and ends with a line like `correct routing x/10, expected source found y/7`.
 
+The script waits `EVAL_PAUSE` seconds between questions (default 5, or `--pause N`) so the per-minute token window can recover. With the pauses, the retries and several LLM calls per question, a run takes a few minutes on the free tier. `eval_results.json` is rewritten after every question, with `"complete": false` until the last one, so stopping the script with Ctrl-C keeps what finished. Progress lines go to stderr.
+
 The set has 10 questions. Seven are answerable from the corpus, each with the file that should be cited: two on query parameters, two on first steps, and one each on path parameters, request body and dependencies. Three are clearly out of scope (a PyTorch CNN, a Kubernetes ingress, the capital of Australia) and should end in `no_answer`.
 
-"Correct routing" means the graph answered when it should have and declined when it should have. "Expected source found" only counts for the seven answerable questions. A question that raises an error, including a provider error such as a refused model, is recorded with the error text and the run continues. The script exits with a message if `GROQ_API_KEY` is unset or the index is empty. This checks routing and retrieval, not the quality of the answer text, and ten questions is a small sample.
+"Correct routing" means the graph answered when it should have and declined when it should have. "Expected source found" only counts for the seven answerable questions. A question that raises an error, including a provider error such as a refused model or a rate limit that survived the retries, is recorded with the error text and the run continues. The script exits with a message if `GROQ_API_KEY` is unset or the index is empty. This checks routing and retrieval, not the quality of the answer text, and ten questions is a small sample.
 
 ### Results
 
@@ -310,5 +318,5 @@ What I would do with more time:
 - Sessions in SQLite or Redis so they survive restarts and multiple workers.
 - A larger evaluation set with checks on the answer text, not only routing and sources.
 - Caching of query analysis and of answers to repeated questions.
-- Backoff on provider rate-limit errors, and a configurable cap on grading concurrency.
+- A shared token budget or queue. The retry and concurrency limits apply per request, so several simultaneous `/query` calls can still exceed a per-minute limit together.
 - Token-based chunk sizes, so code chunks match the embedding model's window.

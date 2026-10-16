@@ -11,7 +11,7 @@ from app.graph.state import GraphState, QueryType, Source, Turn
 logger = logging.getLogger(__name__)
 
 DEFAULT_QUERY_TYPE: QueryType = "conceptual"
-GRADER_CONCURRENCY = 5
+TRUNCATION_MARKER = " [truncated]"
 MAX_REGENERATIONS = 1
 HISTORY_ANSWER_CHARS = 600
 
@@ -79,6 +79,10 @@ class GraphDeps:
     top_k: int
     # only needed when the hallucination check is switched on
     grounding_checker: Runnable | None = None
+    # grading calls are the bulk of the tokens, so they run a few at a time and see a
+    # shortened chunk. Generation and citations always use the full text.
+    grading_concurrency: int = 2
+    grading_chunk_chars: int = 1200
 
 
 def analyze_query(state: GraphState, deps: GraphDeps) -> dict:
@@ -122,11 +126,16 @@ def retrieve(state: GraphState, deps: GraphDeps) -> dict:
 def grade_documents(state: GraphState, deps: GraphDeps) -> dict:
     documents = state["documents"]
     inputs = [
-        {"question": state["standalone_question"], "context": format_chunk(doc)}
+        {
+            "question": state["standalone_question"],
+            "context": format_chunk(doc, deps.grading_chunk_chars),
+        }
         for doc in documents
     ]
     grades = deps.grader.batch(
-        inputs, config={"max_concurrency": GRADER_CONCURRENCY}, return_exceptions=True
+        inputs,
+        config={"max_concurrency": deps.grading_concurrency},
+        return_exceptions=True,
     )
 
     relevant: list[Document] = []
@@ -276,9 +285,12 @@ def format_history(history: list[Turn]) -> str:
     )
 
 
-def format_chunk(doc: Document) -> str:
+def format_chunk(doc: Document, max_chars: int | None = None) -> str:
     header = f"{doc.metadata['source']} | {doc.metadata['header_path']}".rstrip(" |")
-    return f"[source: {header}]\n{doc.page_content}"
+    text = doc.page_content
+    if max_chars is not None and len(text) > max_chars:
+        text = text[:max_chars].rstrip() + TRUNCATION_MARKER
+    return f"[source: {header}]\n{text}"
 
 
 def chunk_label(doc: Document) -> str:

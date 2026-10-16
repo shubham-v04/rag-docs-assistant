@@ -36,3 +36,25 @@ def test_models_can_be_set_in_an_env_file(clean_env, tmp_path):
     env_file.write_text("GRADER_MODEL=from/dotenv\n")
 
     assert Settings(_env_file=env_file).grader_model == "from/dotenv"
+
+
+def test_rate_limit_and_structured_output_defaults():
+    settings = Settings(_env_file=None)
+
+    assert settings.grading_concurrency == 2
+    assert settings.grading_chunk_chars == 1200
+    assert settings.eval_pause == 5.0
+    assert settings.structured_output_method == "json_schema"
+
+
+def test_rate_limit_settings_come_from_the_environment(monkeypatch):
+    monkeypatch.setenv("GRADING_CONCURRENCY", "1")
+    monkeypatch.setenv("GRADING_CHUNK_CHARS", "800")
+    monkeypatch.setenv("EVAL_PAUSE", "12.5")
+    monkeypatch.setenv("STRUCTURED_OUTPUT_METHOD", "function_calling")
+    settings = Settings(_env_file=None)
+
+    assert settings.grading_concurrency == 1
+    assert settings.grading_chunk_chars == 800
+    assert settings.eval_pause == 12.5
+    assert settings.structured_output_method == "function_calling"

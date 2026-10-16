@@ -233,11 +233,13 @@ def test_main_runs_every_question_and_writes_the_results_file(tmp_path, capsys):
         return graph_output(["query-params.md"])
 
     evaluate.main(
-        ["--questions", str(questions), "--output", str(output)], run=fake_run
+        ["--questions", str(questions), "--output", str(output), "--pause", "0"],
+        run=fake_run,
     )
 
     saved = json.loads(output.read_text())
-    assert set(saved) == {"run_at", "summary", "results"}
+    assert set(saved) == {"run_at", "complete", "summary", "results"}
+    assert saved["complete"] is True
     assert saved["summary"]["total"] == 3
     assert saved["summary"]["routing_correct"] == 2
     assert saved["summary"]["errors"] == 1
@@ -260,7 +262,7 @@ def test_main_runs_every_question_and_writes_the_results_file(tmp_path, capsys):
 
 def test_main_exits_with_a_clear_message_without_a_groq_key(monkeypatch, tmp_path):
     monkeypatch.setattr(
-        evaluate, "get_settings", lambda: SimpleNamespace(groq_api_key="")
+        evaluate, "get_settings", lambda: SimpleNamespace(groq_api_key="", eval_pause=0)
     )
     called = []
     monkeypatch.setattr(evaluate, "run_graph", lambda q: called.append(q))
@@ -275,7 +277,9 @@ def test_main_exits_with_a_clear_message_without_a_groq_key(monkeypatch, tmp_pat
 
 def test_main_exits_when_the_index_is_empty(monkeypatch, tmp_path):
     monkeypatch.setattr(
-        evaluate, "get_settings", lambda: SimpleNamespace(groq_api_key="k")
+        evaluate,
+        "get_settings",
+        lambda: SimpleNamespace(groq_api_key="k", eval_pause=0),
     )
     monkeypatch.setattr("app.ingestion.indexer.chunk_count", lambda: 0)
 
@@ -296,3 +300,155 @@ def test_a_provider_error_is_recorded_as_an_error_not_as_no_answer():
     assert result["actual"] == "error"
     assert result["correct"] is False
     assert result["error"].startswith("ProviderError: every grading call failed")
+
+
+# --- pause, saving as it goes, progress --------------------------------------
+
+
+def two_questions(tmp_path):
+    path = tmp_path / "questions.json"
+    path.write_text(
+        json.dumps([ANSWERABLE, OUT_OF_SCOPE, {**ANSWERABLE, "question": "third"}])
+    )
+    return path
+
+
+def test_pause_is_applied_between_questions_but_not_before_the_first_or_after_the_last(
+    tmp_path,
+):
+    sleeps = []
+    evaluate.main(
+        [
+            "--questions",
+            str(two_questions(tmp_path)),
+            "--output",
+            str(tmp_path / "r.json"),
+            "--pause",
+            "7",
+        ],
+        run=lambda q: graph_output(["query-params.md"]),
+        sleep=sleeps.append,
+    )
+
+    assert sleeps == [7.0, 7.0]
+
+
+def test_pause_defaults_to_the_eval_pause_setting(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        evaluate, "get_settings", lambda: SimpleNamespace(eval_pause=5.0)
+    )
+    sleeps = []
+    evaluate.main(
+        [
+            "--questions",
+            str(two_questions(tmp_path)),
+            "--output",
+            str(tmp_path / "r.json"),
+        ],
+        run=lambda q: graph_output(["query-params.md"]),
+        sleep=sleeps.append,
+    )
+
+    assert sleeps == [5.0, 5.0]
+
+
+def test_zero_pause_never_sleeps(tmp_path):
+    sleeps = []
+    evaluate.main(
+        [
+            "--questions",
+            str(two_questions(tmp_path)),
+            "--output",
+            str(tmp_path / "r.json"),
+            "--pause",
+            "0",
+        ],
+        run=lambda q: graph_output(["query-params.md"]),
+        sleep=sleeps.append,
+    )
+
+    assert sleeps == []
+
+
+def test_results_file_is_rewritten_after_every_question_and_survives_an_error(tmp_path):
+    output = tmp_path / "results.json"
+    seen_on_disk = []
+
+    def run(question):
+        # what is on disk at the moment this question starts
+        seen_on_disk.append(json.loads(output.read_text()) if output.exists() else None)
+        if question == OUT_OF_SCOPE["question"]:
+            raise RuntimeError("rate limit survived the retries")
+        return graph_output(["query-params.md"])
+
+    evaluate.main(
+        [
+            "--questions",
+            str(two_questions(tmp_path)),
+            "--output",
+            str(output),
+            "--pause",
+            "0",
+        ],
+        run=run,
+    )
+
+    assert seen_on_disk[0] is None
+    assert [len(d["results"]) for d in seen_on_disk[1:]] == [1, 2]
+    assert all(d["complete"] is False for d in seen_on_disk[1:])
+    final = json.loads(output.read_text())
+    assert final["complete"] is True
+    assert [r["actual"] for r in final["results"]] == ["answer", "error", "answer"]
+    assert "rate limit survived" in final["results"][1]["error"]
+    assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_an_interrupted_run_keeps_the_results_so_far(tmp_path, capsys):
+    output = tmp_path / "results.json"
+
+    def run(question):
+        if question == OUT_OF_SCOPE["question"]:
+            raise KeyboardInterrupt
+        return graph_output(["query-params.md"])
+
+    evaluate.main(
+        [
+            "--questions",
+            str(two_questions(tmp_path)),
+            "--output",
+            str(output),
+            "--pause",
+            "0",
+        ],
+        run=run,
+    )
+
+    saved = json.loads(output.read_text())
+    assert saved["complete"] is False
+    assert len(saved["results"]) == 1
+    assert "interrupted after 1 of 3 questions" in capsys.readouterr().err
+
+
+def test_progress_lines_name_the_question_outcome_and_errors(tmp_path, capsys):
+    def run(question):
+        if question == "third":
+            raise RuntimeError("provider down")
+        return graph_output(["query-params.md"])
+
+    evaluate.main(
+        [
+            "--questions",
+            str(two_questions(tmp_path)),
+            "--output",
+            str(tmp_path / "r.json"),
+            "--pause",
+            "0",
+        ],
+        run=run,
+    )
+
+    err = capsys.readouterr().err
+    assert "[1/3] running: How do I declare an optional query parameter?" in err
+    assert "[1/3] answer (expected answer), retries 0, source found yes" in err
+    assert "[2/3] answer (expected no_answer)" in err
+    assert "[3/3] ERROR after" in err and "RuntimeError: provider down" in err

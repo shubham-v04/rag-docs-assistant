@@ -1,5 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -23,10 +24,23 @@ class Settings(BaseSettings):
     corpus_dir: Path = ROOT_DIR / "data" / "corpus"
     feedback_db: Path = ROOT_DIR / "data" / "feedback.sqlite3"
 
+    # json_schema avoids the tool-call errors some Groq models return in function_calling
+    # mode. Set STRUCTURED_OUTPUT_METHOD=function_calling to go back if a model refuses it.
+    structured_output_method: Literal[
+        "json_schema", "function_calling", "json_mode"
+    ] = "json_schema"
+
     top_k: int = 5
     max_retries: int = 2
     chunk_size: int = 900
     chunk_overlap: int = 150
+
+    # free-tier Groq limits are per minute, so grade a few chunks at a time
+    grading_concurrency: int = 2
+    # characters of each chunk sent to the grader; stored text and citations are untouched
+    grading_chunk_chars: int = 1200
+    # seconds scripts/evaluate.py waits between questions
+    eval_pause: float = 5.0
 
     enable_hallucination_check: bool = True
     enable_memory: bool = True
